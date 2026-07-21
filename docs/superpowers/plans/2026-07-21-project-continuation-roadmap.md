@@ -143,12 +143,12 @@ export function continueDrawing(session: DrawingSession, point: Point): DrawingS
 export function finishDrawing(session: DrawingSession, id: string): Annotation | null;
 ```
 
-- [ ] Write failing tests proving rectangle/arrow use normalized endpoints, pen/mosaic retain ordered points, and zero-length gestures return `null`.
-- [ ] Run `pnpm --dir apps/desktop exec vitest run src/domain/drawing-session.test.ts`; expect missing-module failure.
-- [ ] Implement the three functions with immutable values and add completed annotations through `addAnnotation`.
-- [ ] Connect pointer down/move/up on the annotation canvas only after a selection exists; clamp points to the current selection.
-- [ ] Run focused tests, `pnpm test -- --run`, and `pnpm typecheck`; expect all green.
-- [ ] Commit with `git commit -m "feat: add pointer-driven annotations"`.
+- [x] Write failing tests proving rectangle bounds normalize, arrows retain direction, pen/mosaic retain ordered points, and zero-length gestures return `null`.
+- [x] Run `pnpm --dir apps/desktop exec vitest run src/domain/drawing-session.test.ts`; confirmed missing-module failure.
+- [x] Implement the three functions with immutable values and add completed annotations through `addAnnotation`.
+- [x] Connect pointer down/move/up on the annotation canvas only after a selection exists; clamp points to the current selection.
+- [x] Run focused tests, `pnpm test -- --run`, and `pnpm typecheck`; all green.
+- [x] Commit with `git commit -m "feat: add pointer-driven annotations"`.
 
 ### Task A2: Text Entry and Selection Handles
 
@@ -500,3 +500,11 @@ Use this prompt on the next device:
 - Verified: 20 tests, TypeScript typecheck, Vite production build.
 - Blockers: Rust stable MSVC toolchain was not installed on the initial device; native Tauri compilation was not executed there.
 - Next action: bootstrap the new Windows machine, then start Task A1 on `codex/windows-native-capture`.
+
+### 2026-07-21 — pointer annotation session
+
+- Branch: `main`
+- HEAD: `5087929 feat: add pointer-driven annotations`
+- Verified: 30 tests, TypeScript typecheck, Vite production build.
+- Blockers: none.
+- Next action: Task A2, write failing tests for `resizeSelection` and inline text commit/cancel.
