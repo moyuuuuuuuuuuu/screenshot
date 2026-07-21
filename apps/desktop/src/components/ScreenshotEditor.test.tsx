@@ -1,0 +1,52 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DesktopBridge } from '../bridge/desktop-bridge';
+import { ScreenshotEditor } from './ScreenshotEditor';
+
+function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
+  return {
+    copyPng: vi.fn().mockResolvedValue(undefined),
+    savePng: vi.fn().mockResolvedValue('capture.png'),
+    closeOverlay: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
+describe('ScreenshotEditor', () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
+      (callback) => callback(new Blob(['png'], { type: 'image/png' })),
+    );
+  });
+
+  it('creates a normalized selection from a reverse drag', () => {
+    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} />);
+    const overlay = screen.getByTestId('selection-surface');
+
+    fireEvent.pointerDown(overlay, { clientX: 180, clientY: 140, pointerId: 1 });
+    fireEvent.pointerMove(overlay, { clientX: 40, clientY: 30, pointerId: 1 });
+    fireEvent.pointerUp(overlay, { clientX: 40, clientY: 30, pointerId: 1 });
+
+    expect(screen.getByText('140 × 110')).toBeInTheDocument();
+    expect(screen.getByRole('toolbar', { name: '截图工具' })).toBeInTheDocument();
+  });
+
+  it('keeps editor state when clipboard output rejects', async () => {
+    const bridge = createBridge({
+      copyPng: vi.fn().mockRejectedValue(new Error('busy')),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const overlay = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(overlay, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(overlay, { clientX: 120, clientY: 80, pointerId: 1 });
+    fireEvent.pointerUp(overlay, { clientX: 120, clientY: 80, pointerId: 1 });
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('复制失败');
+    expect(screen.getByLabelText('截图编辑器')).toBeInTheDocument();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+});
