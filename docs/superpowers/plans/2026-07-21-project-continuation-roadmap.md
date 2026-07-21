@@ -315,9 +315,9 @@ Shortcut available / shortcut already registered
 - [x] Test fixed headers, fixed footers, floating controls and consecutive unchanged frames.
 - [x] Remove repeated static regions when confidence is sufficient and preserve ambiguous content for manual cropping.
 - [x] Detect the bottom only after two consecutive no-new-content observations.
-- [ ] Add the icon-only long-capture action, progress/stop UI, cleanup paths and final-image handoff to the editor.
+- [x] Add the icon-only long-capture action, progress/stop UI, cleanup paths and final-image handoff to the editor.
 - [ ] Verify Edge/Chrome, File Explorer, Windows Settings and one Electron application.
-- [ ] Commit with `git commit -m "feat: integrate automatic scrolling screenshots"`.
+- [x] Commit with `git commit -m "feat: integrate automatic scrolling screenshots"`.
 
 Phase C acceptance:
 
