@@ -140,4 +140,22 @@ describe('ScreenshotEditor', () => {
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
     finishCapture?.({ png: new Blob(['partial']), partial: true });
   });
+
+  it('shows the native long-capture failure reason', async () => {
+    const bridge = createBridge({
+      startLongCapture: vi.fn().mockRejectedValue('selection must fit within one monitor'),
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '长截图' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '长截图失败：selection must fit within one monitor',
+    );
+  });
 });

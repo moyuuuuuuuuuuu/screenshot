@@ -39,6 +39,12 @@ function screenshotName(now = new Date()): string {
   return `截图-${now.getFullYear()}${part(now.getMonth() + 1)}${part(now.getDate())}-${part(now.getHours())}${part(now.getMinutes())}${part(now.getSeconds())}.png`;
 }
 
+function errorMessage(error: unknown): string {
+  if (typeof error === 'string' && error.trim()) return error;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return '未知错误';
+}
+
 export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [selection, setSelection] = useState<Rect | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('rectangle');
@@ -224,8 +230,9 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       setHistory(createEditorHistory());
       setSelection({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
       if (result.partial) setError('长截图已停止，已保留部分结果');
-    } catch {
-      setError('长截图失败，请重试');
+    } catch (captureError) {
+      console.error('Long capture failed', captureError);
+      setError(`长截图失败：${errorMessage(captureError)}`);
     } finally {
       setLongCaptureProgress(null);
     }
