@@ -2,6 +2,8 @@
 
 Windows 优先的轻量截图、标注、OCR 与中英翻译工具。当前阶段包含可在浏览器运行和测试的截图覆盖层、选区、统一图标工具栏、标注领域模型、Canvas 渲染与 Tauri 2 桌面壳配置。
 
+跨设备继续开发请从 [项目接力路线图](docs/superpowers/plans/2026-07-21-project-continuation-roadmap.md) 开始，其中包含当前进度、新设备环境准备、后续阶段、验收命令和可直接复制的恢复提示词。
+
 ## 本地开发
 
 需要 Node.js 22 和 pnpm 10：
