@@ -217,12 +217,12 @@ pub struct MonitorFrame {
 async fn capture_desktop() -> Result<Vec<MonitorFrame>, String>;
 ```
 
-- [ ] Add Rust unit tests for monitors left/above the primary display, mixed DPI scale factors, and virtual-desktop bounding rectangles.
-- [ ] Run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`; expect missing capture implementation failure.
-- [ ] Implement Windows monitor enumeration and capture behind `platform::windows`; do not expose Windows types to Tauri commands.
-- [ ] Register `capture_desktop` in `generate_handler!`.
-- [ ] Run Rust tests and `cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings`.
-- [ ] Commit with `git commit -m "feat: capture the Windows virtual desktop"`.
+- [x] Add Rust unit tests for monitors left/above the primary display, mixed DPI scale factors, and virtual-desktop bounding rectangles.
+- [x] Run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`; the first available Rust run passed after the toolchain was installed.
+- [x] Implement Windows monitor enumeration and capture behind `platform::windows`; do not expose Windows types to Tauri commands.
+- [x] Register `capture_desktop` in `generate_handler!`.
+- [x] Run Rust tests and `cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings`.
+- [x] Commit with `git commit -m "feat: capture the Windows virtual desktop"`.
 
 ### Task B2: Tauri Desktop Bridge
 
