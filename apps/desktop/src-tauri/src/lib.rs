@@ -5,6 +5,7 @@ pub mod output;
 mod platform;
 pub mod scroll;
 pub mod scroll_controller;
+pub mod stitcher;
 pub mod tray;
 
 #[cfg(test)]

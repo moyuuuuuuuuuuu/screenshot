@@ -1,0 +1,316 @@
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RgbaFrame {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrayFrame {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OverlapMatch {
+    pub overlap_rows: u32,
+    pub mean_error: f32,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchError {
+    InvalidFrame,
+    DifferentDimensions,
+    LowTexture,
+    LowConfidence,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailedMatchAction {
+    RetrySmallerStep { scroll_delta: i32 },
+    PreservePartialResult,
+}
+
+pub fn failed_match_action(already_retried: bool, current_scroll_delta: i32) -> FailedMatchAction {
+    if already_retried {
+        FailedMatchAction::PreservePartialResult
+    } else {
+        let direction = current_scroll_delta.signum();
+        let magnitude = (current_scroll_delta.unsigned_abs() / 2).max(1) as i32;
+        FailedMatchAction::RetrySmallerStep {
+            scroll_delta: direction * magnitude,
+        }
+    }
+}
+
+pub fn downscale_grayscale(frame: &RgbaFrame, scale: u32) -> Result<GrayFrame, MatchError> {
+    let expected = frame.width as usize * frame.height as usize * 4;
+    if frame.width == 0 || frame.height == 0 || frame.pixels.len() != expected {
+        return Err(MatchError::InvalidFrame);
+    }
+    let scale = scale.max(1);
+    let output_width = frame.width.div_ceil(scale);
+    let output_height = frame.height.div_ceil(scale);
+    let mut pixels = Vec::with_capacity(output_width as usize * output_height as usize);
+
+    for output_y in 0..output_height {
+        for output_x in 0..output_width {
+            let start_x = output_x * scale;
+            let start_y = output_y * scale;
+            let end_x = (start_x + scale).min(frame.width);
+            let end_y = (start_y + scale).min(frame.height);
+            let mut sum = 0_u32;
+            let mut count = 0_u32;
+            for y in start_y..end_y {
+                for x in start_x..end_x {
+                    let offset = ((y * frame.width + x) * 4) as usize;
+                    let red = u32::from(frame.pixels[offset]);
+                    let green = u32::from(frame.pixels[offset + 1]);
+                    let blue = u32::from(frame.pixels[offset + 2]);
+                    sum += (red * 77 + green * 150 + blue * 29) >> 8;
+                    count += 1;
+                }
+            }
+            pixels.push((sum / count) as u8);
+        }
+    }
+
+    Ok(GrayFrame {
+        width: output_width,
+        height: output_height,
+        pixels,
+    })
+}
+
+fn region_texture(frame: &GrayFrame, start_row: u32, rows: u32) -> f32 {
+    let width = frame.width as usize;
+    let start = start_row as usize;
+    let end = (start_row + rows) as usize;
+    let mut difference = 0_u64;
+    let mut samples = 0_u64;
+    for y in start..end {
+        for x in 1..width {
+            let offset = y * width + x;
+            difference += u64::from(frame.pixels[offset].abs_diff(frame.pixels[offset - 1]));
+            samples += 1;
+        }
+        if y > start {
+            for x in 0..width {
+                let offset = y * width + x;
+                difference +=
+                    u64::from(frame.pixels[offset].abs_diff(frame.pixels[offset - width]));
+                samples += 1;
+            }
+        }
+    }
+    if samples == 0 {
+        0.0
+    } else {
+        difference as f32 / samples as f32
+    }
+}
+
+pub fn find_vertical_overlap(
+    previous: &GrayFrame,
+    next: &GrayFrame,
+    minimum_overlap: u32,
+    maximum_overlap: u32,
+    minimum_texture: f32,
+    minimum_confidence: f32,
+) -> Result<OverlapMatch, MatchError> {
+    if previous.width == 0
+        || previous.height == 0
+        || next.width == 0
+        || next.height == 0
+        || previous.pixels.len() != previous.width as usize * previous.height as usize
+        || next.pixels.len() != next.width as usize * next.height as usize
+    {
+        return Err(MatchError::InvalidFrame);
+    }
+    if previous.width != next.width || previous.height != next.height {
+        return Err(MatchError::DifferentDimensions);
+    }
+
+    let upper = maximum_overlap.min(previous.height.saturating_sub(1));
+    let lower = minimum_overlap.max(1).min(upper);
+    if lower > upper {
+        return Err(MatchError::InvalidFrame);
+    }
+
+    let mut best: Option<(u32, f32, f32)> = None;
+    for overlap in lower..=upper {
+        let previous_start = previous.height - overlap;
+        let texture = region_texture(previous, previous_start, overlap);
+        if texture < minimum_texture {
+            continue;
+        }
+        let width = previous.width as usize;
+        let sample_count = overlap as usize * width;
+        let previous_offset = previous_start as usize * width;
+        let difference: u64 = previous.pixels[previous_offset..previous_offset + sample_count]
+            .iter()
+            .zip(&next.pixels[..sample_count])
+            .map(|(left, right)| u64::from(left.abs_diff(*right)))
+            .sum();
+        let mean_error = difference as f32 / sample_count as f32;
+        if best.is_none_or(|(_, best_error, _)| mean_error < best_error) {
+            best = Some((overlap, mean_error, texture));
+        }
+    }
+
+    let Some((overlap_rows, mean_error, texture)) = best else {
+        return Err(MatchError::LowTexture);
+    };
+    let fit = 1.0 - mean_error / 255.0;
+    let texture_factor = (texture / (minimum_texture * 4.0).max(1.0)).min(1.0);
+    let confidence = fit.clamp(0.0, 1.0) * texture_factor;
+    if confidence < minimum_confidence {
+        return Err(MatchError::LowConfidence);
+    }
+    Ok(OverlapMatch {
+        overlap_rows,
+        mean_error,
+        confidence,
+    })
+}
+
+#[derive(Default)]
+pub struct ChunkedStitcher {
+    width: Option<u32>,
+    height: u32,
+    chunks: Vec<RgbaFrame>,
+}
+
+impl ChunkedStitcher {
+    pub fn append(&mut self, frame: RgbaFrame, overlap_rows: u32) -> Result<(), MatchError> {
+        let expected = frame.width as usize * frame.height as usize * 4;
+        if frame.width == 0 || frame.height == 0 || frame.pixels.len() != expected {
+            return Err(MatchError::InvalidFrame);
+        }
+        if self.width.is_some_and(|width| width != frame.width) {
+            return Err(MatchError::DifferentDimensions);
+        }
+        if overlap_rows >= frame.height && !self.chunks.is_empty() {
+            return Err(MatchError::InvalidFrame);
+        }
+
+        let retained = if self.chunks.is_empty() {
+            frame
+        } else {
+            let row_bytes = frame.width as usize * 4;
+            RgbaFrame {
+                width: frame.width,
+                height: frame.height - overlap_rows,
+                pixels: frame.pixels[overlap_rows as usize * row_bytes..].to_vec(),
+            }
+        };
+        self.width = Some(retained.width);
+        self.height = self.height.saturating_add(retained.height);
+        self.chunks.push(retained);
+        Ok(())
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn finish(self) -> Result<RgbaFrame, MatchError> {
+        let width = self.width.ok_or(MatchError::InvalidFrame)?;
+        let capacity = width as usize * self.height as usize * 4;
+        let mut pixels = Vec::with_capacity(capacity);
+        for chunk in self.chunks {
+            pixels.extend_from_slice(&chunk.pixels);
+        }
+        Ok(RgbaFrame {
+            width,
+            height: self.height,
+            pixels,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        downscale_grayscale, failed_match_action, find_vertical_overlap, ChunkedStitcher,
+        FailedMatchAction, MatchError, RgbaFrame,
+    };
+
+    fn document_frame(start_row: u32, height: u32, width: u32) -> RgbaFrame {
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
+        for y in start_row..start_row + height {
+            for x in 0..width {
+                let value = ((y * 37 + x * 71 + y * x * 3) % 251) as u8;
+                pixels.extend_from_slice(&[value, value.wrapping_add(31), value / 2, 255]);
+            }
+        }
+        RgbaFrame {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    fn match_frames(previous: &RgbaFrame, next: &RgbaFrame) -> Result<u32, MatchError> {
+        let previous = downscale_grayscale(previous, 1)?;
+        let next = downscale_grayscale(next, 1)?;
+        Ok(find_vertical_overlap(&previous, &next, 4, 36, 2.0, 0.8)?.overlap_rows)
+    }
+
+    #[test]
+    fn finds_overlap_in_normal_content() {
+        assert_eq!(
+            match_frames(&document_frame(0, 40, 8), &document_frame(20, 40, 8)),
+            Ok(20)
+        );
+    }
+
+    #[test]
+    fn supports_variable_scroll_steps() {
+        assert_eq!(
+            match_frames(&document_frame(0, 40, 8), &document_frame(13, 40, 8)),
+            Ok(27)
+        );
+        assert_eq!(
+            match_frames(&document_frame(0, 40, 8), &document_frame(28, 40, 8)),
+            Ok(12)
+        );
+    }
+
+    #[test]
+    fn rejects_low_texture_content() {
+        let blank = RgbaFrame {
+            width: 8,
+            height: 40,
+            pixels: vec![128; 8 * 40 * 4],
+        };
+        assert_eq!(match_frames(&blank, &blank), Err(MatchError::LowTexture));
+    }
+
+    #[test]
+    fn retries_once_with_a_smaller_scroll_step_then_preserves_partial() {
+        assert_eq!(
+            failed_match_action(false, -600),
+            FailedMatchAction::RetrySmallerStep { scroll_delta: -300 }
+        );
+        assert_eq!(
+            failed_match_action(true, -300),
+            FailedMatchAction::PreservePartialResult
+        );
+    }
+
+    #[test]
+    fn chunked_stitcher_copies_the_complete_output_only_on_finish() {
+        let first = document_frame(0, 4, 2);
+        let second = document_frame(2, 4, 2);
+        let expected = document_frame(0, 6, 2);
+        let mut stitcher = ChunkedStitcher::default();
+
+        stitcher.append(first, 0).unwrap();
+        stitcher.append(second, 2).unwrap();
+        assert_eq!(stitcher.height(), 6);
+        assert_eq!(stitcher.finish().unwrap(), expected);
+    }
+}

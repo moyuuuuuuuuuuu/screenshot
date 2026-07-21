@@ -304,11 +304,11 @@ Shortcut available / shortcut already registered
 
 ### Task C2: Visual Overlap Matcher and Stitcher
 
-- [ ] Build synthetic failing fixtures for normal content, low-texture content and variable scroll steps.
-- [ ] Implement downscaled grayscale overlap search and confidence scoring as platform-independent pure functions.
-- [ ] Retry one failed match with a smaller scroll step, then return a partial result.
-- [ ] Compose original-resolution pixels using the selected seam without repeatedly copying the full output.
-- [ ] Commit with `git commit -m "feat: stitch scrolling screenshot frames"`.
+- [x] Build synthetic failing fixtures for normal content, low-texture content and variable scroll steps.
+- [x] Implement downscaled grayscale overlap search and confidence scoring as platform-independent pure functions.
+- [x] Retry one failed match with a smaller scroll step, then return a partial result.
+- [x] Compose original-resolution pixels using the selected seam without repeatedly copying the full output.
+- [x] Commit with `git commit -m "feat: stitch scrolling screenshot frames"`.
 
 ### Task C3: Static Elements, Bottom Detection, and Editor Integration
 
