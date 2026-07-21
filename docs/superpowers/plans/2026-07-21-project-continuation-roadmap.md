@@ -296,11 +296,11 @@ Shortcut available / shortcut already registered
 
 ### Task C1: Long-Capture Session and Frame Stability
 
-- [ ] Define and test the long-capture state machine, stop semantics and partial-result recovery.
-- [ ] Add Windows target-window tracking and typed wheel-input commands behind the platform boundary.
-- [ ] Implement frame stability sampling instead of fixed-delay capture.
-- [ ] Enforce the 200-frame, 60,000-pixel and 120-second limits.
-- [ ] Commit with `git commit -m "feat: add scrolling capture session"`.
+- [x] Define and test the long-capture state machine, stop semantics and partial-result recovery.
+- [x] Add Windows target-window tracking and typed wheel-input commands behind the platform boundary.
+- [x] Implement frame stability sampling instead of fixed-delay capture.
+- [x] Enforce the 200-frame, 60,000-pixel and 120-second limits.
+- [x] Commit with `git commit -m "feat: add scrolling capture session"`.
 
 ### Task C2: Visual Overlap Matcher and Stitcher
 

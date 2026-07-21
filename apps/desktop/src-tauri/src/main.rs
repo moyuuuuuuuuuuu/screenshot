@@ -35,7 +35,9 @@ fn main() {
             screenshot_tool::capture::capture_desktop,
             screenshot_tool::output::copy_png,
             screenshot_tool::output::save_png,
-            screenshot_tool::output::close_overlay
+            screenshot_tool::output::close_overlay,
+            screenshot_tool::scroll::track_scroll_target,
+            screenshot_tool::scroll::send_scroll
         ])
         .run(tauri::generate_context!())
         .expect("failed to run screenshot tool");

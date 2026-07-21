@@ -13,6 +13,9 @@ use windows_sys::Win32::{
 
 use super::RawMonitorFrame;
 
+mod scroll;
+pub use scroll::{send_scroll, track_scroll_target};
+
 #[derive(Clone, Copy)]
 struct MonitorDescriptor {
     rect: RECT,
