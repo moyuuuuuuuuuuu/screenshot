@@ -46,9 +46,11 @@ button { font: inherit; }
   background: rgba(13, 17, 20, 0.92);
   color: #fff;
   font-size: 12px;
+  pointer-events: auto;
+  cursor: move;
 }
 
-.selection-handle { position: absolute; width: 8px; height: 8px; border: 1px solid #167da5; background: #eafaff; border-radius: 2px; transform: translate(-50%, -50%); }
+.selection-handle { position: absolute; width: 8px; height: 8px; border: 1px solid #167da5; background: #eafaff; border-radius: 2px; transform: translate(-50%, -50%); pointer-events: auto; }
 .selection-handle--nw { left: 0; top: 0; }.selection-handle--n { left: 50%; top: 0; }.selection-handle--ne { left: 100%; top: 0; }
 .selection-handle--e { left: 100%; top: 50%; }.selection-handle--se { left: 100%; top: 100%; }.selection-handle--s { left: 50%; top: 100%; }
 .selection-handle--sw { left: 0; top: 100%; }.selection-handle--w { left: 0; top: 50%; }
@@ -62,5 +64,7 @@ button { font: inherit; }
 .toolbar__button:disabled { opacity: 0.4; cursor: default; }
 .toolbar__button--accent { color: #63ccef; }.toolbar__button--success { color: #5cda98; }.toolbar__button--danger { color: #ff7373; }
 .toolbar__separator { width: 1px; height: 24px; margin: 0 4px; background: #414953; }
+
+.text-editor { position: absolute; z-index: 6; min-width: 120px; min-height: 32px; padding: 4px 6px; overflow: hidden; resize: none; border: 1px solid #63ccef; border-radius: 4px; outline: none; background: rgba(13, 17, 20, 0.82); color: #ff3b30; font: 18px/1.35 sans-serif; }
 
 .editor-alert { position: absolute; left: 50%; bottom: 28px; z-index: 10; transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }

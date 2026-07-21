@@ -172,12 +172,12 @@ export type TextEditorProps = Readonly<{
 }>;
 ```
 
-- [ ] Test every resize handle, negative virtual-desktop coordinates, minimum 8×8 size, Enter commit, and Escape cancel.
-- [ ] Implement `resizeSelection` as a pure function using `normalizeRect` and `clampRect`.
-- [ ] Implement an inline transparent text input; never use `window.prompt`.
-- [ ] Connect handle dragging and selection dragging without starting a new selection.
-- [ ] Verify with `pnpm test -- --run && pnpm typecheck && pnpm --filter @screenshot/desktop build`.
-- [ ] Commit with `git commit -m "feat: add text editing and selection resizing"`.
+- [x] Test every resize handle, negative virtual-desktop coordinates, minimum 8×8 size, Enter commit, and Escape cancel.
+- [x] Implement `resizeSelection` as a pure function using `normalizeRect` and `clampRect`.
+- [x] Implement an inline transparent text input; never use `window.prompt`.
+- [x] Connect handle dragging and selection dragging without starting a new selection.
+- [x] Verify with `pnpm test -- --run && pnpm typecheck && pnpm --filter @screenshot/desktop build`.
+- [x] Commit with `git commit -m "feat: add text editing and selection resizing"`.
 
 Phase A acceptance:
 

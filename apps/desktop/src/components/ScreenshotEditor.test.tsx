@@ -64,4 +64,28 @@ describe('ScreenshotEditor', () => {
 
     expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
   });
+
+  it('commits inline text without closing the overlay', async () => {
+    const bridge = createBridge();
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '文字' }));
+    fireEvent.pointerDown(screen.getByTestId('annotation-surface'), {
+      clientX: 60,
+      clientY: 70,
+      pointerId: 2,
+    });
+
+    const editor = await screen.findByRole('textbox', { name: '输入标注文字' });
+    await userEvent.type(editor, 'hello{Enter}');
+
+    expect(screen.queryByRole('textbox', { name: '输入标注文字' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
+    expect(bridge.copyPng).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
 });

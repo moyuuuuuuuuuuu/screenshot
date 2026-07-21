@@ -14,6 +14,7 @@ export function TextEditor({ position, onCommit, onCancel }: TextEditorProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       onCancel();
       return;
     }
@@ -23,6 +24,7 @@ export function TextEditor({ position, onCommit, onCancel }: TextEditorProps) {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     const text = event.currentTarget.value.trim();
     if (text.length > 0) {
       onCommit(text);

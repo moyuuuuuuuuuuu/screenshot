@@ -14,9 +14,10 @@ import {
   type DrawingSession,
   type Tool,
 } from '../domain/drawing-session';
-import type { Rect } from '../domain/geometry';
+import type { Point, Rect } from '../domain/geometry';
 import { renderAnnotations } from '../render/render-annotations';
 import { SelectionOverlay } from './SelectionOverlay';
+import { TextEditor } from './TextEditor';
 import { Toolbar, type ToolbarAction } from './Toolbar';
 
 type ScreenshotEditorProps = Readonly<{
@@ -42,6 +43,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [selection, setSelection] = useState<Rect | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('rectangle');
   const [history, setHistory] = useState<EditorHistory>(createEditorHistory);
+  const [textPosition, setTextPosition] = useState<Point | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sourceImage = useRef<HTMLImageElement>(null);
   const annotationCanvas = useRef<HTMLCanvasElement>(null);
@@ -88,7 +90,11 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const startAnnotation = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
       const point = pointInsideSelection(event.clientX, event.clientY);
-      if (!point || activeTool === 'text') return;
+      if (!point) return;
+      if (activeTool === 'text') {
+        setTextPosition(point);
+        return;
+      }
       drawingSession.current = startDrawing(activeTool, point);
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
@@ -185,6 +191,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     (action: ToolbarAction) => {
       if (['rectangle', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
         setActiveTool(action as Tool);
+        setTextPosition(null);
         return;
       }
       if (action === 'undo') setHistory((current) => undo(current));
@@ -217,6 +224,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   }, [bridge, copyAndClose, save]);
 
   const showToolbar = selection && selection.width > 0 && selection.height > 0;
+  const viewportBounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
   const toolbarTop = showToolbar
     ? selection.y + selection.height + 10 + 50 > window.innerHeight
       ? Math.max(8, selection.y - 54)
@@ -236,9 +244,29 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       />
       <SelectionOverlay
         selection={selection}
+        bounds={viewportBounds}
         locked={Boolean(showToolbar)}
         onSelectionChange={setSelection}
       />
+      {textPosition ? (
+        <TextEditor
+          position={textPosition}
+          onCancel={() => setTextPosition(null)}
+          onCommit={(text) => {
+            setHistory((current) =>
+              addAnnotation(current, {
+                id: `annotation-${++annotationSequence.current}`,
+                kind: 'text',
+                position: textPosition,
+                text,
+                fontSize: 18,
+                color: '#ff3b30',
+              }),
+            );
+            setTextPosition(null);
+          }}
+        />
+      ) : null}
       {showToolbar ? (
         <div
           className="toolbar-positioner"
