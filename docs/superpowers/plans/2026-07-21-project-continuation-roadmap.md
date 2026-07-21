@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Continue the existing Windows-first screenshot tool on any development machine through native capture, complete annotation interaction, cloud OCR/translation through Coze, and a verified Windows installer.
+**Goal:** Continue the existing Windows-first screenshot tool on any development machine through native capture, complete annotation interaction, automatic scrolling screenshots, cloud OCR/translation through Coze, and a verified Windows installer.
 
 **Architecture:** Preserve the current React/TypeScript editor and the `DesktopBridge` boundary. Add Windows-specific behavior behind typed Tauri commands in Rust, then add a separate TypeScript cloud API whose provider interface isolates Coze from the desktop client. Deliver each phase as an independently testable commit series.
 
@@ -56,6 +56,7 @@ Not yet implemented:
 Authoritative documents:
 
 - Product spec: `docs/superpowers/specs/2026-07-21-cross-platform-screenshot-tool-design.md`
+- Scrolling screenshot spec: `docs/superpowers/specs/2026-07-21-scrolling-screenshot-design.md`
 - Completed phase plan: `docs/superpowers/plans/2026-07-21-desktop-editor-foundation.md`
 - Continuation roadmap: this file.
 
@@ -291,9 +292,45 @@ Shortcut available / shortcut already registered
 
 ---
 
-## 5. Phase C — Cloud API and Coze
+## 5. Phase C — Scrolling Screenshot Engine
 
-### Task C1: Cloud Service and Provider Contract
+### Task C1: Long-Capture Session and Frame Stability
+
+- [ ] Define and test the long-capture state machine, stop semantics and partial-result recovery.
+- [ ] Add Windows target-window tracking and typed wheel-input commands behind the platform boundary.
+- [ ] Implement frame stability sampling instead of fixed-delay capture.
+- [ ] Enforce the 200-frame, 60,000-pixel and 120-second limits.
+- [ ] Commit with `git commit -m "feat: add scrolling capture session"`.
+
+### Task C2: Visual Overlap Matcher and Stitcher
+
+- [ ] Build synthetic failing fixtures for normal content, low-texture content and variable scroll steps.
+- [ ] Implement downscaled grayscale overlap search and confidence scoring as platform-independent pure functions.
+- [ ] Retry one failed match with a smaller scroll step, then return a partial result.
+- [ ] Compose original-resolution pixels using the selected seam without repeatedly copying the full output.
+- [ ] Commit with `git commit -m "feat: stitch scrolling screenshot frames"`.
+
+### Task C3: Static Elements, Bottom Detection, and Editor Integration
+
+- [ ] Test fixed headers, fixed footers, floating controls and consecutive unchanged frames.
+- [ ] Remove repeated static regions when confidence is sufficient and preserve ambiguous content for manual cropping.
+- [ ] Detect the bottom only after two consecutive no-new-content observations.
+- [ ] Add the icon-only long-capture action, progress/stop UI, cleanup paths and final-image handoff to the editor.
+- [ ] Verify Edge/Chrome, File Explorer, Windows Settings and one Electron application.
+- [ ] Commit with `git commit -m "feat: integrate automatic scrolling screenshots"`.
+
+Phase C acceptance:
+
+- Selecting a scrollable region starts automatic capture and can be stopped at any time.
+- Common browser and desktop content produces a usable long image without obvious duplicate seams.
+- Fixed elements are removed when reliable; ambiguous cases preserve content and allow cropping.
+- Failures preserve completed frames and always restore the overlay and input state.
+
+---
+
+## 6. Phase D — Cloud API and Coze
+
+### Task D1: Cloud Service and Provider Contract
 
 **Files:**
 - Create: `apps/cloud/package.json`
@@ -326,7 +363,7 @@ export interface OcrTranslationProvider {
 - [ ] Run `pnpm --filter @screenshot/cloud test -- --run` and root typecheck.
 - [ ] Commit with `git commit -m "feat: add mock OCR and translation API"`.
 
-### Task C2: Anonymous Quota and Rate Limiting
+### Task D2: Anonymous Quota and Rate Limiting
 
 **Files:**
 - Create: `apps/cloud/src/quota/quota-store.ts`
@@ -350,7 +387,7 @@ Never log image bytes, recognized text, translated text, tokens, or signatures
 - [ ] Return `QUOTA_EXCEEDED`, `RATE_LIMITED`, and `INVALID_IMAGE` without provider calls.
 - [ ] Commit with `git commit -m "feat: enforce anonymous cloud quotas"`.
 
-### Task C3: Coze Provider and Workflow Contract
+### Task D3: Coze Provider and Workflow Contract
 
 **Files:**
 - Create: `apps/cloud/src/providers/coze-provider.ts`
@@ -390,7 +427,7 @@ COZE_WORKFLOW_ID=
 - [ ] Document exact Coze start-node inputs, output-node JSON, publishing, token creation, and a curl smoke test.
 - [ ] Commit with `git commit -m "feat: integrate Coze OCR translation workflow"`.
 
-### Task C4: Desktop Cloud Client and Result Panel
+### Task D4: Desktop Cloud Client and Result Panel
 
 **Files:**
 - Create: `apps/desktop/src/cloud/cloud-client.ts`
@@ -416,9 +453,9 @@ export interface CloudClient {
 
 ---
 
-## 6. Phase D — Release Verification
+## 7. Phase E — Release Verification
 
-### Task D1: CI and Windows Installer
+### Task E1: CI and Windows Installer
 
 **Files:**
 - Create: `.github/workflows/ci.yml`
@@ -432,7 +469,7 @@ export interface CloudClient {
 - [ ] Build MSI/NSIS artifacts and install/uninstall them on a clean Windows test account.
 - [ ] Commit with `git commit -m "ci: build and verify Windows releases"`.
 
-### Task D2: Final Acceptance
+### Task E2: Final Acceptance
 
 - [ ] Execute every row in the Windows acceptance matrix and record results in `docs/release-checklist.md`.
 - [ ] Confirm no screenshot or OCR text appears in application/server logs.
@@ -455,7 +492,7 @@ Expected: all commands exit 0 and Git reports a clean working tree.
 
 ---
 
-## 7. Cross-Device Handoff Protocol
+## 8. Cross-Device Handoff Protocol
 
 At the end of every development session:
 
@@ -477,7 +514,7 @@ Handoff entry format:
 - Next action: Task A1, write the failing rectangle gesture test
 ```
 
-## 8. Copyable Resume Prompt
+## 9. Copyable Resume Prompt
 
 Use this prompt on the next device:
 
@@ -491,7 +528,7 @@ Use this prompt on the next device:
 从 continuation roadmap 中第一个未勾选的任务继续，严格使用 TDD：先写失败测试并确认失败，再写最小实现，验证全量测试后提交并 push 当前分支。不要跳过 Windows 多显示器/DPI、隐私和扣子适配器边界。
 ```
 
-## 9. Handoff Log
+## 10. Handoff Log
 
 ### 2026-07-21 — initial device
 
