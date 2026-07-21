@@ -14,8 +14,9 @@ import {
   X,
 } from 'lucide-react';
 import type { ComponentType, SVGProps } from 'react';
+import type { Tool } from '../domain/drawing-session';
 
-export type Tool = 'rectangle' | 'arrow' | 'pen' | 'text' | 'mosaic';
+export type { Tool } from '../domain/drawing-session';
 export type ToolbarAction =
   | Tool
   | 'undo'

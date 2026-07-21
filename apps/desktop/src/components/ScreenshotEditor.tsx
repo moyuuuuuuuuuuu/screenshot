@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DesktopBridge } from '../bridge/desktop-bridge';
 import {
+  addAnnotation,
   createEditorHistory,
   redo,
   undo,
   type EditorHistory,
 } from '../domain/editor-history';
+import {
+  continueDrawing,
+  finishDrawing,
+  startDrawing,
+  type DrawingSession,
+  type Tool,
+} from '../domain/drawing-session';
 import type { Rect } from '../domain/geometry';
+import { renderAnnotations } from '../render/render-annotations';
 import { SelectionOverlay } from './SelectionOverlay';
-import { Toolbar, type Tool, type ToolbarAction } from './Toolbar';
+import { Toolbar, type ToolbarAction } from './Toolbar';
 
 type ScreenshotEditorProps = Readonly<{
   sourceUrl: string;
@@ -36,6 +45,83 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [error, setError] = useState<string | null>(null);
   const sourceImage = useRef<HTMLImageElement>(null);
   const annotationCanvas = useRef<HTMLCanvasElement>(null);
+  const drawingSession = useRef<DrawingSession | null>(null);
+  const annotationSequence = useRef(0);
+
+  useEffect(() => {
+    const canvas = annotationCanvas.current;
+    if (!canvas) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    const image = sourceImage.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      renderAnnotations(context, image, history.present, {
+        width: canvas.width,
+        height: canvas.height,
+      });
+      return;
+    }
+
+    const blankSource = document.createElement('canvas');
+    blankSource.width = canvas.width;
+    blankSource.height = canvas.height;
+    renderAnnotations(context, blankSource, history.present, {
+      width: canvas.width,
+      height: canvas.height,
+    });
+  }, [history]);
+
+  const pointInsideSelection = useCallback(
+    (x: number, y: number) => {
+      if (!selection) return null;
+      return {
+        x: Math.min(Math.max(x, selection.x), selection.x + selection.width),
+        y: Math.min(Math.max(y, selection.y), selection.y + selection.height),
+      };
+    },
+    [selection],
+  );
+
+  const startAnnotation = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const point = pointInsideSelection(event.clientX, event.clientY);
+      if (!point || activeTool === 'text') return;
+      drawingSession.current = startDrawing(activeTool, point);
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    [activeTool, pointInsideSelection],
+  );
+
+  const continueAnnotation = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const point = pointInsideSelection(event.clientX, event.clientY);
+      if (!point || !drawingSession.current) return;
+      drawingSession.current = continueDrawing(drawingSession.current, point);
+    },
+    [pointInsideSelection],
+  );
+
+  const finishAnnotation = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const point = pointInsideSelection(event.clientX, event.clientY);
+      const current = drawingSession.current;
+      drawingSession.current = null;
+      if (!point || !current) return;
+
+      const completed = finishDrawing(
+        continueDrawing(current, point),
+        `annotation-${++annotationSequence.current}`,
+      );
+      if (completed) {
+        setHistory((historyState) => addAnnotation(historyState, completed));
+      }
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    },
+    [pointInsideSelection],
+  );
 
   const exportSelection = useCallback(async () => {
     if (!selection || selection.width <= 0 || selection.height <= 0) {
@@ -140,8 +226,19 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   return (
     <main className="screenshot-editor" aria-label="截图编辑器">
       {sourceUrl ? <img ref={sourceImage} className="screenshot-source" src={sourceUrl} alt="" /> : null}
-      <canvas ref={annotationCanvas} className="annotation-canvas" />
-      <SelectionOverlay selection={selection} onSelectionChange={setSelection} />
+      <canvas
+        ref={annotationCanvas}
+        className={`annotation-canvas${showToolbar ? ' annotation-canvas--active' : ''}`}
+        data-testid="annotation-surface"
+        onPointerDown={startAnnotation}
+        onPointerMove={continueAnnotation}
+        onPointerUp={finishAnnotation}
+      />
+      <SelectionOverlay
+        selection={selection}
+        locked={Boolean(showToolbar)}
+        onSelectionChange={setSelection}
+      />
       {showToolbar ? (
         <div
           className="toolbar-positioner"

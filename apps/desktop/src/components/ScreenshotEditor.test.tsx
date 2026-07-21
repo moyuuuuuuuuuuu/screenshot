@@ -49,4 +49,19 @@ describe('ScreenshotEditor', () => {
     expect(screen.getByLabelText('截图编辑器')).toBeInTheDocument();
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
   });
+
+  it('adds a pointer-drawn rectangle to undo history', () => {
+    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+
+    const annotationSurface = screen.getByTestId('annotation-surface');
+    fireEvent.pointerDown(annotationSurface, { clientX: 50, clientY: 50, pointerId: 2 });
+    fireEvent.pointerMove(annotationSurface, { clientX: 150, clientY: 110, pointerId: 2 });
+    fireEvent.pointerUp(annotationSurface, { clientX: 150, clientY: 110, pointerId: 2 });
+
+    expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
+  });
 });

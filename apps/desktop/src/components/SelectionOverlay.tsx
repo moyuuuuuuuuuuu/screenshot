@@ -4,18 +4,20 @@ import { normalizeRect } from '../domain/geometry';
 
 type SelectionOverlayProps = Readonly<{
   selection: Rect | null;
+  locked?: boolean;
   onSelectionChange(selection: Rect): void;
 }>;
 
 export function SelectionOverlay({
   selection,
+  locked = false,
   onSelectionChange,
 }: SelectionOverlayProps) {
   const dragStart = useRef<Point | null>(null);
 
   return (
     <div
-      className="selection-surface"
+      className={`selection-surface${locked ? ' selection-surface--locked' : ''}`}
       data-testid="selection-surface"
       onPointerDown={(event) => {
         dragStart.current = { x: event.clientX, y: event.clientY };
