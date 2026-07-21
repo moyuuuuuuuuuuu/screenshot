@@ -24,6 +24,7 @@ button { font: inherit; }
 }
 
 .screenshot-source { object-fit: fill; user-select: none; pointer-events: none; }
+.screenshot-source--long { object-fit: contain; }
 .annotation-canvas { pointer-events: none; touch-action: none; }
 .annotation-canvas--active { pointer-events: auto; cursor: crosshair; }
 .selection-surface { cursor: crosshair; background: rgba(0, 0, 0, 0.34); touch-action: none; }
@@ -64,6 +65,9 @@ button { font: inherit; }
 .toolbar__button:disabled { opacity: 0.4; cursor: default; }
 .toolbar__button--accent { color: #63ccef; }.toolbar__button--success { color: #5cda98; }.toolbar__button--danger { color: #ff7373; }
 .toolbar__separator { width: 1px; height: 24px; margin: 0 4px; background: #414953; }
+.toolbar__width { display: flex; width: 74px; padding: 0 5px; }
+.toolbar__width input { width: 64px; accent-color: #63ccef; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .text-editor { position: absolute; z-index: 6; min-width: 120px; min-height: 32px; padding: 4px 6px; overflow: hidden; resize: none; border: 1px solid #63ccef; border-radius: 4px; outline: none; background: rgba(13, 17, 20, 0.82); color: #ff3b30; font: 18px/1.35 sans-serif; }
 

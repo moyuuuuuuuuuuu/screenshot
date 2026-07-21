@@ -9,6 +9,8 @@ describe('Toolbar', () => {
         activeTool="rectangle"
         canUndo={false}
         canRedo={false}
+        drawingWidth={4}
+        onDrawingWidthChange={vi.fn()}
         onAction={vi.fn()}
       />,
     );
@@ -31,6 +33,8 @@ describe('Toolbar', () => {
         activeTool="mosaic"
         canUndo
         canRedo
+        drawingWidth={20}
+        onDrawingWidthChange={vi.fn()}
         onAction={vi.fn()}
       />,
     );
@@ -43,5 +47,20 @@ describe('Toolbar', () => {
       'aria-pressed',
       'false',
     );
+  });
+
+  it('shows a width slider for pen and mosaic tools', () => {
+    render(
+      <Toolbar
+        activeTool="pen"
+        canUndo={false}
+        canRedo={false}
+        drawingWidth={7}
+        onDrawingWidthChange={vi.fn()}
+        onAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('slider', { name: '粗细' })).toHaveValue('7');
   });
 });

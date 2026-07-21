@@ -70,4 +70,12 @@ describe('drawing session', () => {
 
     expect(finishDrawing(session, 'text-1')).toBeNull();
   });
+
+  it('uses the selected pen and mosaic widths', () => {
+    const pen = continueDrawing(startDrawing('pen', { x: 1, y: 1 }), { x: 4, y: 4 });
+    const mosaic = continueDrawing(startDrawing('mosaic', { x: 1, y: 1 }), { x: 4, y: 4 });
+
+    expect(finishDrawing(pen, 'pen-width', { strokeWidth: 9 })).toMatchObject({ strokeWidth: 9 });
+    expect(finishDrawing(mosaic, 'mosaic-width', { mosaicBrushWidth: 36 })).toMatchObject({ brushWidth: 36 });
+  });
 });

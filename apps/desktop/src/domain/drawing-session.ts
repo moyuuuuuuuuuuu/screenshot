@@ -10,6 +10,11 @@ export type DrawingSession = Readonly<{
   points: readonly Point[];
 }>;
 
+export type DrawingStyle = Readonly<{
+  strokeWidth?: number;
+  mosaicBrushWidth?: number;
+}>;
+
 export function startDrawing(tool: Tool, point: Point): DrawingSession {
   return { tool, start: point, points: [point] };
 }
@@ -31,6 +36,7 @@ function hasMovement(session: DrawingSession): boolean {
 export function finishDrawing(
   session: DrawingSession,
   id: string,
+  style: DrawingStyle = {},
 ): Annotation | null {
   const end = session.points.at(-1);
   if (!end || !hasMovement(session) || session.tool === 'text') {
@@ -44,7 +50,7 @@ export function finishDrawing(
         kind: 'rectangle',
         rect: normalizeRect(session.start, end),
         stroke: '#ff4d4f',
-        strokeWidth: 2,
+        strokeWidth: style.strokeWidth ?? 2,
       };
     case 'arrow':
       return {
@@ -53,7 +59,7 @@ export function finishDrawing(
         start: session.start,
         end,
         stroke: '#ff4d4f',
-        strokeWidth: 3,
+        strokeWidth: style.strokeWidth ?? 3,
       };
     case 'pen':
       return {
@@ -61,14 +67,14 @@ export function finishDrawing(
         kind: 'pen',
         points: session.points,
         stroke: '#ff4d4f',
-        strokeWidth: 4,
+        strokeWidth: style.strokeWidth ?? 4,
       };
     case 'mosaic':
       return {
         id,
         kind: 'mosaic',
         points: session.points,
-        brushWidth: 20,
+        brushWidth: style.mosaicBrushWidth ?? 20,
         blockSize: 10,
       };
   }

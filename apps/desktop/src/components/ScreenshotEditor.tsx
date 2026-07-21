@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
 import {
   addAnnotation,
@@ -51,6 +51,12 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [history, setHistory] = useState<EditorHistory>(createEditorHistory);
   const [textPosition, setTextPosition] = useState<Point | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [drawingPreview, setDrawingPreview] = useState<DrawingSession | null>(null);
+  const [penWidth, setPenWidth] = useState(4);
+  const [mosaicWidth, setMosaicWidth] = useState(20);
+  const [imageRevision, setImageRevision] = useState(0);
+  const [toolbarWidth, setToolbarWidth] = useState(570);
+  const [longCaptureBounds, setLongCaptureBounds] = useState<Rect | null>(null);
   const [longCaptureProgress, setLongCaptureProgress] = useState<LongCaptureProgress | null>(null);
   const [editorSourceUrl, setEditorSourceUrl] = useState(sourceUrl);
   const sourceImage = useRef<HTMLImageElement>(null);
@@ -59,9 +65,11 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const annotationSequence = useRef(0);
   const generatedSourceUrl = useRef<string | null>(null);
   const longCaptureSource = useRef<Blob | null>(null);
+  const toolbarPositioner = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     longCaptureSource.current = null;
+    setLongCaptureBounds(null);
     setEditorSourceUrl(sourceUrl);
   }, [sourceUrl]);
 
@@ -78,8 +86,15 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     if (!context) return;
 
     const image = sourceImage.current;
+    const preview = drawingPreview
+      ? finishDrawing(drawingPreview, 'annotation-preview', {
+          strokeWidth: penWidth,
+          mosaicBrushWidth: mosaicWidth,
+        })
+      : null;
+    const annotations = preview ? [...history.present, preview] : history.present;
     if (image?.complete && image.naturalWidth > 0) {
-      renderAnnotations(context, image, history.present, {
+      renderAnnotations(context, image, annotations, {
         width: canvas.width,
         height: canvas.height,
       });
@@ -89,11 +104,11 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     const blankSource = document.createElement('canvas');
     blankSource.width = canvas.width;
     blankSource.height = canvas.height;
-    renderAnnotations(context, blankSource, history.present, {
+    renderAnnotations(context, blankSource, annotations, {
       width: canvas.width,
       height: canvas.height,
     });
-  }, [history]);
+  }, [drawingPreview, history, imageRevision, mosaicWidth, penWidth]);
 
   const pointInsideSelection = useCallback(
     (x: number, y: number) => {
@@ -115,6 +130,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
         return;
       }
       drawingSession.current = startDrawing(activeTool, point);
+      setDrawingPreview(drawingSession.current);
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
     [activeTool, pointInsideSelection],
@@ -125,6 +141,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       const point = pointInsideSelection(event.clientX, event.clientY);
       if (!point || !drawingSession.current) return;
       drawingSession.current = continueDrawing(drawingSession.current, point);
+      setDrawingPreview(drawingSession.current);
     },
     [pointInsideSelection],
   );
@@ -134,18 +151,20 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       const point = pointInsideSelection(event.clientX, event.clientY);
       const current = drawingSession.current;
       drawingSession.current = null;
+      setDrawingPreview(null);
       if (!point || !current) return;
 
       const completed = finishDrawing(
         continueDrawing(current, point),
         `annotation-${++annotationSequence.current}`,
+        { strokeWidth: penWidth, mosaicBrushWidth: mosaicWidth },
       );
       if (completed) {
         setHistory((historyState) => addAnnotation(historyState, completed));
       }
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     },
-    [pointInsideSelection],
+    [mosaicWidth, penWidth, pointInsideSelection],
   );
 
   const exportSelection = useCallback(async () => {
@@ -154,10 +173,11 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     }
     if (
       longCaptureSource.current
-      && selection.x === 0
-      && selection.y === 0
-      && selection.width === window.innerWidth
-      && selection.height === window.innerHeight
+      && longCaptureBounds
+      && selection.x === longCaptureBounds.x
+      && selection.y === longCaptureBounds.y
+      && selection.width === longCaptureBounds.width
+      && selection.height === longCaptureBounds.height
       && history.present.length === 0
     ) {
       return longCaptureSource.current;
@@ -195,7 +215,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       }
     }
     return canvasToBlob(canvas);
-  }, [history.present.length, selection]);
+  }, [history.present.length, longCaptureBounds, selection]);
 
   const copyAndClose = useCallback(async () => {
     try {
@@ -210,7 +230,8 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const save = useCallback(async () => {
     try {
       setError(null);
-      await bridge.savePng(await exportSelection(), screenshotName());
+      const savedPath = await bridge.savePng(await exportSelection(), screenshotName());
+      if (savedPath) await bridge.closeOverlay();
     } catch {
       setError('保存失败，请重试');
     }
@@ -228,7 +249,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       longCaptureSource.current = result.png;
       setEditorSourceUrl(resultUrl);
       setHistory(createEditorHistory());
-      setSelection({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
+      setSelection(null);
       if (result.partial) setError('长截图已停止，已保留部分结果');
     } catch (captureError) {
       console.error('Long capture failed', captureError);
@@ -285,10 +306,48 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       ? Math.max(8, selection.y - 54)
       : selection.y + selection.height + 10
     : 0;
+  const toolbarLeft = showToolbar
+    ? Math.min(
+        Math.max(8, selection.x + selection.width - toolbarWidth),
+        Math.max(8, window.innerWidth - toolbarWidth - 8),
+      )
+    : 0;
+
+  const handleSourceLoad = () => {
+    setImageRevision((revision) => revision + 1);
+    const image = sourceImage.current;
+    if (!longCaptureSource.current || !image?.naturalWidth || !image.naturalHeight) return;
+    const scale = Math.min(
+      window.innerWidth / image.naturalWidth,
+      window.innerHeight / image.naturalHeight,
+      1,
+    );
+    const bounds = {
+      x: (window.innerWidth - image.naturalWidth * scale) / 2,
+      y: (window.innerHeight - image.naturalHeight * scale) / 2,
+      width: image.naturalWidth * scale,
+      height: image.naturalHeight * scale,
+    };
+    setLongCaptureBounds(bounds);
+    setSelection(bounds);
+  };
+
+  useLayoutEffect(() => {
+    const width = toolbarPositioner.current?.offsetWidth;
+    if (width && width !== toolbarWidth) setToolbarWidth(width);
+  }, [activeTool, showToolbar, toolbarWidth]);
 
   return (
     <main className="screenshot-editor" aria-label="截图编辑器">
-      {editorSourceUrl ? <img ref={sourceImage} className="screenshot-source" src={editorSourceUrl} alt="" /> : null}
+      {editorSourceUrl ? (
+        <img
+          ref={sourceImage}
+          className={`screenshot-source${longCaptureSource.current ? ' screenshot-source--long' : ''}`}
+          src={editorSourceUrl}
+          alt=""
+          onLoad={handleSourceLoad}
+        />
+      ) : null}
       <canvas
         ref={annotationCanvas}
         className={`annotation-canvas${showToolbar ? ' annotation-canvas--active' : ''}`}
@@ -324,13 +383,16 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       ) : null}
       {showToolbar && !longCaptureProgress ? (
         <div
+          ref={toolbarPositioner}
           className="toolbar-positioner"
-          style={{ left: Math.max(8, selection.x + selection.width - 570), top: toolbarTop }}
+          style={{ left: toolbarLeft, top: toolbarTop }}
         >
           <Toolbar
             activeTool={activeTool}
             canUndo={history.past.length > 0}
             canRedo={history.future.length > 0}
+            drawingWidth={activeTool === 'mosaic' ? mosaicWidth : penWidth}
+            onDrawingWidthChange={activeTool === 'mosaic' ? setMosaicWidth : setPenWidth}
             onAction={handleAction}
           />
         </div>

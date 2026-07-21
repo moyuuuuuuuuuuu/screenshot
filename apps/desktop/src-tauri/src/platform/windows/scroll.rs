@@ -1,8 +1,7 @@
 use windows_sys::Win32::{
     Foundation::POINT,
     UI::WindowsAndMessaging::{
-        GetAncestor, IsWindow, PostMessageW, SetForegroundWindow, WindowFromPoint, GA_ROOT,
-        WM_MOUSEWHEEL,
+        IsWindow, PostMessageW, SetForegroundWindow, WindowFromPoint, WM_MOUSEWHEEL,
     },
 };
 
@@ -11,9 +10,7 @@ pub fn track_scroll_target(x: i32, y: i32) -> Result<u64, String> {
     if child.is_null() {
         return Err("no window exists beneath the selected point".to_string());
     }
-    let root = unsafe { GetAncestor(child, GA_ROOT) };
-    let target = if root.is_null() { child } else { root };
-    Ok(target as usize as u64)
+    Ok(child as usize as u64)
 }
 
 pub fn send_scroll(target_id: u64, delta: i32) -> Result<(), String> {

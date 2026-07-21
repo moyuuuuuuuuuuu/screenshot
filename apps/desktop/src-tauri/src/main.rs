@@ -1,4 +1,5 @@
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri::Manager;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
 
 #[tauri::command]
 fn platform_name() -> &'static str {
@@ -11,9 +12,14 @@ fn main() {
         .manage(screenshot_tool::long_capture::LongCaptureRuntime::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        screenshot_tool::app_state::request_capture(app);
+                        if shortcut.matches(Modifiers::empty(), Code::Escape) {
+                            app.state::<screenshot_tool::long_capture::LongCaptureRuntime>()
+                                .request_stop();
+                        } else {
+                            screenshot_tool::app_state::request_capture(app);
+                        }
                     }
                 })
                 .build(),

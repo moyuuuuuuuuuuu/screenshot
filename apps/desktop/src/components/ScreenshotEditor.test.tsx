@@ -70,6 +70,41 @@ describe('ScreenshotEditor', () => {
     expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
   });
 
+  it('renders a rectangle preview before pointer release', () => {
+    const context = {
+      clearRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(),
+      strokeRect: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(),
+      stroke: vi.fn(), fillText: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+
+    const annotationSurface = screen.getByTestId('annotation-surface');
+    fireEvent.pointerDown(annotationSurface, { clientX: 40, clientY: 40, pointerId: 2 });
+    fireEvent.pointerMove(annotationSurface, { clientX: 120, clientY: 100, pointerId: 2 });
+
+    expect(context.strokeRect).toHaveBeenCalledWith(40, 40, 80, 60);
+    expect(screen.getByRole('button', { name: '撤销' })).toBeDisabled();
+  });
+
+  it('closes the overlay after a successful save', async () => {
+    const bridge = createBridge();
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 120, clientY: 80, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 120, clientY: 80, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(bridge.savePng).toHaveBeenCalledOnce();
+    expect(bridge.closeOverlay).toHaveBeenCalledOnce();
+  });
+
   it('commits inline text without closing the overlay', async () => {
     const bridge = createBridge();
     render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);

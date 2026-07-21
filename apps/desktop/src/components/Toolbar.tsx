@@ -36,6 +36,8 @@ type ToolbarProps = Readonly<{
   activeTool: Tool;
   canUndo: boolean;
   canRedo: boolean;
+  drawingWidth: number;
+  onDrawingWidthChange(width: number): void;
   onAction(action: ToolbarAction): void;
 }>;
 
@@ -89,6 +91,8 @@ export function Toolbar({
   activeTool,
   canUndo,
   canRedo,
+  drawingWidth,
+  onDrawingWidthChange,
   onAction,
 }: ToolbarProps) {
   return (
@@ -103,6 +107,19 @@ export function Toolbar({
           onAction={onAction}
         />
       ))}
+      {activeTool === 'pen' || activeTool === 'mosaic' ? (
+        <label className="toolbar__width" title="粗细">
+          <span className="sr-only">粗细</span>
+          <input
+            aria-label="粗细"
+            type="range"
+            min={activeTool === 'pen' ? 2 : 8}
+            max={activeTool === 'pen' ? 16 : 48}
+            value={drawingWidth}
+            onChange={(event) => onDrawingWidthChange(Number(event.currentTarget.value))}
+          />
+        </label>
+      ) : null}
       <span className="toolbar__separator" aria-hidden="true" />
       <IconButton action="undo" icon={Undo2} label="撤销" disabled={!canUndo} onAction={onAction} />
       <IconButton action="redo" icon={Redo2} label="重做" disabled={!canRedo} onAction={onAction} />

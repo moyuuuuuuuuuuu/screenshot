@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::frame_stability::{FrameStabilitySampler, StabilityObservation};
 use crate::platform::{self, RawMonitorFrame};
@@ -20,6 +21,17 @@ pub struct CaptureRegion {
     y: f64,
     width: f64,
     height: f64,
+}
+
+impl CaptureRegion {
+    fn to_physical(self, origin_x: i32, origin_y: i32, scale_factor: f64) -> Self {
+        Self {
+            x: f64::from(origin_x) + self.x * scale_factor,
+            y: f64::from(origin_y) + self.y * scale_factor,
+            width: self.width * scale_factor,
+            height: self.height * scale_factor,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -75,6 +87,10 @@ impl LongCaptureRuntime {
                 state,
             };
         }
+    }
+
+    pub fn request_stop(&self) {
+        self.stop_requested.store(true, Ordering::Release);
     }
 }
 
@@ -298,6 +314,14 @@ pub async fn start_long_capture(
         runtime.finish();
         return Err("overlay window is unavailable".to_string());
     };
+    let origin = window
+        .outer_position()
+        .map_err(|error| format!("failed to read overlay position: {error}"))?;
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
+    let region = region.to_physical(origin.x, origin.y, scale_factor);
+    let escape_registered = app.global_shortcut().register("Escape").is_ok();
     let result = (|| {
         window
             .hide()
@@ -307,13 +331,16 @@ pub async fn start_long_capture(
     })();
     let _ = window.show();
     let _ = window.set_focus();
+    if escape_registered {
+        let _ = app.global_shortcut().unregister("Escape");
+    }
     runtime.finish();
     result
 }
 
 #[tauri::command]
 pub fn stop_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.stop_requested.store(true, Ordering::Release);
+    runtime.request_stop();
 }
 
 #[tauri::command]
@@ -357,5 +384,21 @@ mod tests {
             crop.pixels,
             vec![4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21, 22, 23]
         );
+    }
+
+    #[test]
+    fn converts_logical_selection_to_physical_screen_coordinates() {
+        let region = CaptureRegion {
+            x: 100.0,
+            y: 80.0,
+            width: 400.0,
+            height: 300.0,
+        }
+        .to_physical(-1920, 40, 1.25);
+
+        assert_eq!(region.x, -1795.0);
+        assert_eq!(region.y, 140.0);
+        assert_eq!(region.width, 500.0);
+        assert_eq!(region.height, 375.0);
     }
 }
