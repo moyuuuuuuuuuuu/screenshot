@@ -5,6 +5,7 @@ pub mod output;
 mod platform;
 pub mod scroll;
 pub mod scroll_controller;
+pub mod static_region_detector;
 pub mod stitcher;
 pub mod tray;
 

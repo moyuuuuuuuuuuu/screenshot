@@ -181,6 +181,7 @@ pub struct ChunkedStitcher {
     width: Option<u32>,
     height: u32,
     chunks: Vec<RgbaFrame>,
+    pending_footer: Option<RgbaFrame>,
 }
 
 impl ChunkedStitcher {
@@ -214,6 +215,54 @@ impl ChunkedStitcher {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    pub fn append_with_static_regions(
+        &mut self,
+        frame: RgbaFrame,
+        overlap_rows: u32,
+        top_static_rows: u32,
+        bottom_static_rows: u32,
+        static_confidence: f32,
+        is_final: bool,
+    ) -> Result<(), MatchError> {
+        if static_confidence < 0.9 || top_static_rows + bottom_static_rows >= frame.height {
+            return self.append(frame, overlap_rows);
+        }
+        let row_bytes = frame.width as usize * 4;
+        let first_frame = self.chunks.is_empty();
+        let content_start = if first_frame {
+            0
+        } else {
+            overlap_rows.max(top_static_rows)
+        };
+        let content_end = frame.height - bottom_static_rows;
+        if content_start < content_end {
+            self.append(
+                RgbaFrame {
+                    width: frame.width,
+                    height: content_end - content_start,
+                    pixels: frame.pixels
+                        [content_start as usize * row_bytes..content_end as usize * row_bytes]
+                        .to_vec(),
+                },
+                0,
+            )?;
+        }
+
+        if bottom_static_rows > 0 {
+            self.pending_footer = Some(RgbaFrame {
+                width: frame.width,
+                height: bottom_static_rows,
+                pixels: frame.pixels[content_end as usize * row_bytes..].to_vec(),
+            });
+        }
+        if is_final {
+            if let Some(footer) = self.pending_footer.take() {
+                self.append(footer, 0)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn finish(self) -> Result<RgbaFrame, MatchError> {
@@ -312,5 +361,31 @@ mod tests {
         stitcher.append(second, 2).unwrap();
         assert_eq!(stitcher.height(), 6);
         assert_eq!(stitcher.finish().unwrap(), expected);
+    }
+
+    #[test]
+    fn fixed_header_and_footer_are_not_repeated() {
+        let first = document_frame(0, 6, 2);
+        let mut second = document_frame(2, 6, 2);
+        let first_row_bytes = 2 * 4;
+        second.pixels[..first_row_bytes].copy_from_slice(&first.pixels[..first_row_bytes]);
+        let first_footer = first.pixels[5 * first_row_bytes..6 * first_row_bytes].to_vec();
+        second.pixels[5 * first_row_bytes..6 * first_row_bytes].copy_from_slice(&first_footer);
+        let mut stitcher = ChunkedStitcher::default();
+
+        stitcher
+            .append_with_static_regions(first, 0, 1, 1, 1.0, false)
+            .unwrap();
+        stitcher
+            .append_with_static_regions(second, 4, 1, 1, 1.0, true)
+            .unwrap();
+
+        assert_eq!(stitcher.height(), 7);
+        let output = stitcher.finish().unwrap();
+        assert_eq!(
+            &output.pixels[..first_row_bytes],
+            &document_frame(0, 1, 2).pixels
+        );
+        assert_eq!(&output.pixels[6 * first_row_bytes..], &first_footer);
     }
 }

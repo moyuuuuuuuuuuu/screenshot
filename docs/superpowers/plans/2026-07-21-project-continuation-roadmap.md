@@ -312,9 +312,9 @@ Shortcut available / shortcut already registered
 
 ### Task C3: Static Elements, Bottom Detection, and Editor Integration
 
-- [ ] Test fixed headers, fixed footers, floating controls and consecutive unchanged frames.
-- [ ] Remove repeated static regions when confidence is sufficient and preserve ambiguous content for manual cropping.
-- [ ] Detect the bottom only after two consecutive no-new-content observations.
+- [x] Test fixed headers, fixed footers, floating controls and consecutive unchanged frames.
+- [x] Remove repeated static regions when confidence is sufficient and preserve ambiguous content for manual cropping.
+- [x] Detect the bottom only after two consecutive no-new-content observations.
 - [ ] Add the icon-only long-capture action, progress/stop UI, cleanup paths and final-image handoff to the editor.
 - [ ] Verify Edge/Chrome, File Explorer, Windows Settings and one Electron application.
 - [ ] Commit with `git commit -m "feat: integrate automatic scrolling screenshots"`.
