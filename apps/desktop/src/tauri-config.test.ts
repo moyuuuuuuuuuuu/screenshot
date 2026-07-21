@@ -6,9 +6,10 @@ describe('Tauri overlay configuration', () => {
     const config = JSON.parse(
       readFileSync('src-tauri/tauri.conf.json', 'utf8'),
     ) as {
-      app: { windows: Array<Record<string, unknown>> };
+      app: { withGlobalTauri: boolean; windows: Array<Record<string, unknown>> };
     };
 
+    expect(config.app.withGlobalTauri).toBe(true);
     expect(config.app.windows[0]).toMatchObject({
       label: 'overlay',
       visible: false,

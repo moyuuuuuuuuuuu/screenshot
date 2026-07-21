@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { App, captureFrameSource, createAppDesktopBridge } from './App';
+import { App, captureFrameSource, createAppDesktopBridge, runningInTauri } from './App';
 
 const tauriInvoke = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const tauriRuntime = vi.hoisted(() => vi.fn().mockReturnValue(false));
@@ -27,6 +27,12 @@ describe('App', () => {
     await bridge.closeOverlay();
 
     expect(tauriInvoke).toHaveBeenCalledWith('close_overlay');
+  });
+
+  it('recognizes explicitly injected Tauri globals', () => {
+    expect(runningInTauri({ __TAURI__: {} })).toBe(true);
+    expect(runningInTauri({ __TAURI_INTERNALS__: {} })).toBe(true);
+    expect(runningInTauri({})).toBe(false);
   });
 
   it('creates a PNG source URL from a capture-ready frame', () => {

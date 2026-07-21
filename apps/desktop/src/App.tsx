@@ -11,13 +11,26 @@ type MonitorFrame = Readonly<{
   pngBase64: string;
 }>;
 
+type TauriRuntimeMarkers = Readonly<{
+  __TAURI__?: unknown;
+  __TAURI_INTERNALS__?: unknown;
+}>;
+
+export function runningInTauri(
+  environment: TauriRuntimeMarkers = globalThis as TauriRuntimeMarkers,
+): boolean {
+  return isTauri()
+    || environment.__TAURI__ !== undefined
+    || environment.__TAURI_INTERNALS__ !== undefined;
+}
+
 export function captureFrameSource(frames: readonly MonitorFrame[]): string {
   const first = frames[0];
   return first ? `data:image/png;base64,${first.pngBase64}` : '';
 }
 
 export function createAppDesktopBridge(
-  runtimeIsTauri = isTauri(),
+  runtimeIsTauri = runningInTauri(),
 ): DesktopBridge {
   return runtimeIsTauri
     ? createTauriDesktopBridge(invoke)
@@ -32,7 +45,7 @@ export function App() {
   const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!runningInTauri()) return;
     const unlistenCallbacks: Array<() => void> = [];
     let disposed = false;
     const retainUnlisten = (unlisten: () => void) => {
