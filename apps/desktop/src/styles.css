@@ -68,3 +68,4 @@ button { font: inherit; }
 .text-editor { position: absolute; z-index: 6; min-width: 120px; min-height: 32px; padding: 4px 6px; overflow: hidden; resize: none; border: 1px solid #63ccef; border-radius: 4px; outline: none; background: rgba(13, 17, 20, 0.82); color: #ff3b30; font: 18px/1.35 sans-serif; }
 
 .editor-alert { position: absolute; left: 50%; bottom: 28px; z-index: 10; transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }
+.capture-error { position: absolute; left: 50%; top: 28px; z-index: 11; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }

@@ -13,7 +13,8 @@ base64 = "0.22"
 png = "0.17"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

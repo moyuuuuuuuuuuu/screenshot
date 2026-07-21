@@ -272,12 +272,12 @@ Tray click  -> start capture
 Tray menu   -> Capture / Settings / Quit
 ```
 
-- [ ] Add an app-state test proving a second shortcut press cannot start a concurrent capture.
-- [ ] Add Tauri global-shortcut, tray, dialog, clipboard, and required Windows dependencies with the smallest feature sets.
-- [ ] Implement capture events and overlay show/hide ordering so the overlay is never present in its own screenshot.
-- [ ] Verify shortcut conflicts return a visible startup error rather than silently failing.
-- [ ] Run JS tests, Rust tests, clippy, and `pnpm --filter @screenshot/desktop tauri:build --debug`.
-- [ ] Commit with `git commit -m "feat: add screenshot shortcut and tray lifecycle"`.
+- [x] Add an app-state test proving a second shortcut press cannot start a concurrent capture.
+- [x] Add Tauri global-shortcut, tray, dialog, clipboard, and required Windows dependencies with the smallest feature sets.
+- [x] Implement capture events and overlay show/hide ordering so the overlay is never present in its own screenshot.
+- [ ] Verify shortcut conflicts return a visible startup error rather than silently failing (requires Windows runtime validation; the error dialog path is implemented).
+- [x] Run JS tests, Rust tests, clippy, and `pnpm --filter @screenshot/desktop tauri:build --debug --bundles app`.
+- [x] Commit with `git commit -m "feat: add screenshot shortcut and tray lifecycle"`.
 
 Phase B acceptance matrix:
 
