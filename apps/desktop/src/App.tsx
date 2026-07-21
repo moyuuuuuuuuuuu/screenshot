@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 import { createDefaultBrowserDesktopBridge } from './bridge/browser-desktop-bridge';
@@ -6,8 +6,6 @@ import type { DesktopBridge } from './bridge/desktop-bridge';
 import { createTauriDesktopBridge } from './bridge/tauri-desktop-bridge';
 import { ScreenshotEditor } from './components/ScreenshotEditor';
 import './styles.css';
-
-type DesktopEnvironment = Readonly<{ __TAURI_INTERNALS__?: unknown }>;
 
 type MonitorFrame = Readonly<{
   pngBase64: string;
@@ -19,10 +17,9 @@ export function captureFrameSource(frames: readonly MonitorFrame[]): string {
 }
 
 export function createAppDesktopBridge(
-  environment?: DesktopEnvironment,
+  runtimeIsTauri = isTauri(),
 ): DesktopBridge {
-  const runtime = environment ?? (window as unknown as DesktopEnvironment);
-  return runtime.__TAURI_INTERNALS__ !== undefined
+  return runtimeIsTauri
     ? createTauriDesktopBridge(invoke)
     : createDefaultBrowserDesktopBridge();
 }
@@ -35,7 +32,7 @@ export function App() {
   const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
-    if ((window as unknown as DesktopEnvironment).__TAURI_INTERNALS__ === undefined) return;
+    if (!isTauri()) return;
     const unlistenCallbacks: Array<() => void> = [];
     let disposed = false;
     const retainUnlisten = (unlisten: () => void) => {
