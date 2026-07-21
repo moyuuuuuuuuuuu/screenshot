@@ -53,8 +53,8 @@ fn encoded_frames_preserve_each_monitor_scale_factor() {
 
 #[test]
 fn monitor_pixels_are_encoded_as_png() {
-    let encoded = encode_monitor_frames(vec![frame(-10, -20, 1, 1, 1.25)])
-        .expect("frame should encode");
+    let encoded =
+        encode_monitor_frames(vec![frame(-10, -20, 1, 1, 1.25)]).expect("frame should encode");
     let bytes = STANDARD
         .decode(&encoded[0].png_base64)
         .expect("base64 should decode");

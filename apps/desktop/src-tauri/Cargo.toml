@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 png = "0.17"
+rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 
@@ -21,6 +22,7 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging",
 ] }
+clipboard-win = "5.4"
 
 [features]
 default = ["custom-protocol"]

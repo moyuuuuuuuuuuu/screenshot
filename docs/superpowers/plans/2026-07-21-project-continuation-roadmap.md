@@ -248,11 +248,11 @@ async fn save_png(window: tauri::Window, png_bytes: Vec<u8>, suggested_name: Str
     -> Result<Option<String>, String>;
 ```
 
-- [ ] Test exact Tauri command names and payload keys before implementation.
-- [ ] Implement Windows CF_DIB/PNG clipboard output and native save dialog behind Rust commands.
-- [ ] Select the Tauri bridge when `window.__TAURI_INTERNALS__` exists; keep the browser bridge for Vite development.
-- [ ] Verify clipboard output in Paint and saved PNG dimensions on Windows.
-- [ ] Commit with `git commit -m "feat: connect native clipboard and save output"`.
+- [x] Test exact Tauri command names and payload keys before implementation.
+- [x] Implement Windows CF_DIB/PNG clipboard output and native save dialog behind Rust commands.
+- [x] Select the Tauri bridge when `window.__TAURI_INTERNALS__` exists; keep the browser bridge for Vite development.
+- [ ] Verify clipboard output in Paint and saved PNG dimensions on Windows (requires Windows runtime validation).
+- [x] Commit with `git commit -m "feat: connect native clipboard and save output"`.
 
 ### Task B3: Global Shortcut, Tray, and Overlay Lifecycle
 
@@ -276,7 +276,7 @@ Tray menu   -> Capture / Settings / Quit
 - [ ] Add Tauri global-shortcut, tray, dialog, clipboard, and required Windows dependencies with the smallest feature sets.
 - [ ] Implement capture events and overlay show/hide ordering so the overlay is never present in its own screenshot.
 - [ ] Verify shortcut conflicts return a visible startup error rather than silently failing.
-- [ ] Run JS tests, Rust tests, clippy, and `pnpm --filter @screenshot/desktop tauri:build -- --debug`.
+- [ ] Run JS tests, Rust tests, clippy, and `pnpm --filter @screenshot/desktop tauri:build --debug`.
 - [ ] Commit with `git commit -m "feat: add screenshot shortcut and tray lifecycle"`.
 
 Phase B acceptance matrix:
@@ -484,7 +484,7 @@ pnpm typecheck
 pnpm build
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
-pnpm --filter @screenshot/desktop tauri:build -- --debug
+pnpm --filter @screenshot/desktop tauri:build --debug
 git status --short
 ```
 

@@ -35,7 +35,7 @@ Windows 桌面构建还需要：
 
 ```bash
 pnpm --filter @screenshot/desktop tauri dev
-pnpm --filter @screenshot/desktop tauri:build -- --debug
+pnpm --filter @screenshot/desktop tauri:build --debug
 ```
 
 当前 Tauri 窗口被配置为隐藏、全屏、透明、无边框、始终置顶且不显示在任务栏中。后续原生层捕获桌面后再显示该覆盖层。

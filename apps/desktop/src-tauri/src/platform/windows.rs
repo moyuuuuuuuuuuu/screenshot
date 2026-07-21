@@ -3,10 +3,10 @@ use std::{ffi::c_void, mem::size_of, ptr};
 use windows_sys::Win32::{
     Foundation::{BOOL, LPARAM, RECT},
     Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
-        SelectObject, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, DIB_RGB_COLORS,
-        EnumDisplayMonitors, GetDC, GetMonitorInfoW, ReleaseDC, HBITMAP, HDC, HGDIOBJ,
-        HMONITOR, MONITORINFO, SRCCOPY,
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+        EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, ReleaseDC, SelectObject,
+        BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, HMONITOR,
+        MONITORINFO, SRCCOPY,
     },
     UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
 };
