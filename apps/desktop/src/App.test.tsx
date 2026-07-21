@@ -1,17 +1,16 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { App, captureFrameSource, createAppDesktopBridge, runningInTauri } from './App';
+import { App, captureFrameSource, createAppDesktopBridge } from './App';
 
 const tauriInvoke = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const tauriRuntime = vi.hoisted(() => vi.fn().mockReturnValue(false));
-
-vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke, isTauri: tauriRuntime }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(vi.fn()),
+}));
 
 describe('App', () => {
   beforeEach(() => {
     tauriInvoke.mockClear();
-    tauriRuntime.mockReturnValue(false);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
   });
 
@@ -21,18 +20,12 @@ describe('App', () => {
     expect(screen.getByLabelText('截图编辑器')).toBeInTheDocument();
   });
 
-  it('selects the Tauri bridge when the official runtime check succeeds', async () => {
-    const bridge = createAppDesktopBridge(true);
+  it('uses the native bridge for the desktop entrypoint', async () => {
+    const bridge = createAppDesktopBridge();
 
     await bridge.closeOverlay();
 
     expect(tauriInvoke).toHaveBeenCalledWith('close_overlay');
-  });
-
-  it('recognizes explicitly injected Tauri globals', () => {
-    expect(runningInTauri({ __TAURI__: {} })).toBe(true);
-    expect(runningInTauri({ __TAURI_INTERNALS__: {} })).toBe(true);
-    expect(runningInTauri({})).toBe(false);
   });
 
   it('creates a PNG source URL from a capture-ready frame', () => {
