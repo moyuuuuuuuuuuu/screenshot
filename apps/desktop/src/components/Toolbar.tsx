@@ -3,6 +3,7 @@ import {
   Check,
   Copy,
   Grid2X2,
+  GalleryVerticalEnd,
   Languages,
   PenLine,
   Redo2,
@@ -23,6 +24,7 @@ export type ToolbarAction =
   | 'redo'
   | 'ocr'
   | 'translate'
+  | 'long-capture'
   | 'copy'
   | 'save'
   | 'complete'
@@ -105,6 +107,7 @@ export function Toolbar({
       <IconButton action="undo" icon={Undo2} label="撤销" disabled={!canUndo} onAction={onAction} />
       <IconButton action="redo" icon={Redo2} label="重做" disabled={!canRedo} onAction={onAction} />
       <span className="toolbar__separator" aria-hidden="true" />
+      <IconButton action="long-capture" icon={GalleryVerticalEnd} label="长截图" tone="accent" onAction={onAction} />
       <IconButton action="ocr" icon={ScanText} label="OCR" tone="accent" onAction={onAction} />
       <IconButton action="translate" icon={Languages} label="翻译" tone="accent" onAction={onAction} />
       <span className="toolbar__separator" aria-hidden="true" />

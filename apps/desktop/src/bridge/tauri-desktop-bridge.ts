@@ -1,4 +1,5 @@
 import type { DesktopBridge } from './desktop-bridge';
+import type { LongCaptureResult } from './desktop-bridge';
 
 export type TauriInvoke = (
   command: string,
@@ -33,6 +34,40 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     },
     async closeOverlay() {
       await invoke('close_overlay');
+    },
+    async startLongCapture(region, onProgress) {
+      onProgress({ frameCount: 0, stitchedHeight: 0, state: 'preparing' });
+      const progressTimer = window.setInterval(() => {
+        void invoke('long_capture_progress').then((value) => {
+          if (!value || typeof value !== 'object') return;
+          const progress = value as Record<string, unknown>;
+          if (
+            typeof progress.frameCount === 'number'
+            && typeof progress.stitchedHeight === 'number'
+            && ['preparing', 'capturing', 'scrolling', 'stabilizing', 'matching'].includes(String(progress.state))
+          ) {
+            onProgress(progress as unknown as Parameters<typeof onProgress>[0]);
+          }
+        }).catch(() => undefined);
+      }, 120);
+      let value: unknown;
+      try {
+        value = await invoke('start_long_capture', { region });
+      } finally {
+        window.clearInterval(progressTimer);
+      }
+      if (!value || typeof value !== 'object') throw new Error('invalid long capture result');
+      const result = value as { pngBytes?: unknown; partial?: unknown };
+      if (!Array.isArray(result.pngBytes) || typeof result.partial !== 'boolean') {
+        throw new Error('invalid long capture result');
+      }
+      return {
+        png: new Blob([new Uint8Array(result.pngBytes as number[])], { type: 'image/png' }),
+        partial: result.partial,
+      } satisfies LongCaptureResult;
+    },
+    async stopLongCapture() {
+      await invoke('stop_long_capture');
     },
   };
 }

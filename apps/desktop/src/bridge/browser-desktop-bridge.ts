@@ -20,6 +20,10 @@ export function createBrowserDesktopBridge(
     closeOverlay() {
       return dependencies.close();
     },
+    async startLongCapture() {
+      throw new Error('Long capture requires the desktop application');
+    },
+    async stopLongCapture() {},
   };
 }
 

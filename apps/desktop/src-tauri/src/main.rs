@@ -8,6 +8,7 @@ fn platform_name() -> &'static str {
 fn main() {
     tauri::Builder::default()
         .manage(screenshot_tool::app_state::AppState::default())
+        .manage(screenshot_tool::long_capture::LongCaptureRuntime::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -37,7 +38,10 @@ fn main() {
             screenshot_tool::output::save_png,
             screenshot_tool::output::close_overlay,
             screenshot_tool::scroll::track_scroll_target,
-            screenshot_tool::scroll::send_scroll
+            screenshot_tool::scroll::send_scroll,
+            screenshot_tool::long_capture::start_long_capture,
+            screenshot_tool::long_capture::stop_long_capture,
+            screenshot_tool::long_capture::long_capture_progress
         ])
         .run(tauri::generate_context!())
         .expect("failed to run screenshot tool");

@@ -1,6 +1,7 @@
 pub mod app_state;
 pub mod capture;
 pub mod frame_stability;
+pub mod long_capture;
 pub mod output;
 mod platform;
 pub mod scroll;

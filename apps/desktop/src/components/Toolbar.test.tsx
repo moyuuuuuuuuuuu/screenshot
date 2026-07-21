@@ -18,6 +18,10 @@ describe('Toolbar', () => {
       '矩形',
     );
     expect(screen.getByRole('button', { name: '撤销' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '长截图' })).toHaveAttribute(
+      'title',
+      '长截图',
+    );
     expect(screen.queryByText('矩形')).not.toBeInTheDocument();
   });
 

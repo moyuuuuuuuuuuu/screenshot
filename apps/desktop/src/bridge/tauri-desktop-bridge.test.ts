@@ -32,4 +32,22 @@ describe('createTauriDesktopBridge', () => {
 
     expect(invoke).toHaveBeenCalledWith('close_overlay');
   });
+
+  it('starts and stops a long capture with typed PNG output', async () => {
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ pngBytes: [1, 2, 3], partial: true })
+      .mockResolvedValueOnce(undefined);
+    const bridge = createTauriDesktopBridge(invoke);
+    const progress = vi.fn();
+    const region = { x: 10, y: 20, width: 300, height: 400 };
+
+    const result = await bridge.startLongCapture(region, progress);
+    await bridge.stopLongCapture();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'start_long_capture', { region });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'stop_long_capture');
+    expect(result.partial).toBe(true);
+    expect(result.png).toMatchObject({ size: 3, type: 'image/png' });
+    expect(progress).toHaveBeenCalledWith({ frameCount: 0, stitchedHeight: 0, state: 'preparing' });
+  });
 });

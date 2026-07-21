@@ -9,6 +9,11 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     copyPng: vi.fn().mockResolvedValue(undefined),
     savePng: vi.fn().mockResolvedValue('capture.png'),
     closeOverlay: vi.fn().mockResolvedValue(undefined),
+    startLongCapture: vi.fn().mockResolvedValue({
+      png: new Blob(['long-png'], { type: 'image/png' }),
+      partial: false,
+    }),
+    stopLongCapture: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -87,5 +92,52 @@ describe('ScreenshotEditor', () => {
     expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
     expect(bridge.copyPng).not.toHaveBeenCalled();
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('starts long capture for the selection and loads the result back into the editor', async () => {
+    const bridge = createBridge();
+    const createObjectUrl = vi.fn().mockReturnValue('blob:long-capture');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    const { container } = render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '长截图' }));
+
+    expect(bridge.startLongCapture).toHaveBeenCalledWith(
+      { x: 20, y: 30, width: 200, height: 150 },
+      expect.any(Function),
+    );
+    await screen.findByTestId('selection-surface');
+    expect(container.querySelector('.screenshot-source')).toHaveAttribute('src', 'blob:long-capture');
+    expect(createObjectUrl).toHaveBeenCalledOnce();
+  });
+
+  it('shows progress and Esc stops capture without closing the overlay', async () => {
+    let reportProgress: ((progress: { frameCount: number; stitchedHeight: number; state: 'matching' }) => void) | undefined;
+    let finishCapture: ((result: { png: Blob; partial: boolean }) => void) | undefined;
+    const bridge = createBridge({
+      startLongCapture: vi.fn((_region, onProgress) => {
+        reportProgress = onProgress;
+        return new Promise<{ png: Blob; partial: boolean }>((resolve) => { finishCapture = resolve; });
+      }),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
+    await userEvent.click(screen.getByRole('button', { name: '长截图' }));
+
+    reportProgress?.({ frameCount: 3, stitchedHeight: 1240, state: 'matching' });
+    expect(await screen.findByRole('status', { name: '长截图进度' })).toHaveTextContent('3 帧 · 1240 px');
+    await userEvent.keyboard('{Escape}');
+
+    expect(bridge.stopLongCapture).toHaveBeenCalledOnce();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+    finishCapture?.({ png: new Blob(['partial']), partial: true });
   });
 });

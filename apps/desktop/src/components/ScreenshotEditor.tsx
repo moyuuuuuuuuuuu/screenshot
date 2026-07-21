@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DesktopBridge } from '../bridge/desktop-bridge';
+import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
 import {
   addAnnotation,
   createEditorHistory,
@@ -45,10 +45,23 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [history, setHistory] = useState<EditorHistory>(createEditorHistory);
   const [textPosition, setTextPosition] = useState<Point | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [longCaptureProgress, setLongCaptureProgress] = useState<LongCaptureProgress | null>(null);
+  const [editorSourceUrl, setEditorSourceUrl] = useState(sourceUrl);
   const sourceImage = useRef<HTMLImageElement>(null);
   const annotationCanvas = useRef<HTMLCanvasElement>(null);
   const drawingSession = useRef<DrawingSession | null>(null);
   const annotationSequence = useRef(0);
+  const generatedSourceUrl = useRef<string | null>(null);
+  const longCaptureSource = useRef<Blob | null>(null);
+
+  useEffect(() => {
+    longCaptureSource.current = null;
+    setEditorSourceUrl(sourceUrl);
+  }, [sourceUrl]);
+
+  useEffect(() => () => {
+    if (generatedSourceUrl.current) URL.revokeObjectURL(generatedSourceUrl.current);
+  }, []);
 
   useEffect(() => {
     const canvas = annotationCanvas.current;
@@ -133,6 +146,16 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     if (!selection || selection.width <= 0 || selection.height <= 0) {
       throw new Error('No selection');
     }
+    if (
+      longCaptureSource.current
+      && selection.x === 0
+      && selection.y === 0
+      && selection.width === window.innerWidth
+      && selection.height === window.innerHeight
+      && history.present.length === 0
+    ) {
+      return longCaptureSource.current;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(selection.width));
     canvas.height = Math.max(1, Math.round(selection.height));
@@ -166,7 +189,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       }
     }
     return canvasToBlob(canvas);
-  }, [selection]);
+  }, [history.present.length, selection]);
 
   const copyAndClose = useCallback(async () => {
     try {
@@ -187,6 +210,27 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     }
   }, [bridge, exportSelection]);
 
+  const startLongCapture = useCallback(async () => {
+    if (!selection || longCaptureProgress) return;
+    setError(null);
+    setLongCaptureProgress({ frameCount: 0, stitchedHeight: 0, state: 'preparing' });
+    try {
+      const result = await bridge.startLongCapture(selection, setLongCaptureProgress);
+      if (generatedSourceUrl.current) URL.revokeObjectURL(generatedSourceUrl.current);
+      const resultUrl = URL.createObjectURL(result.png);
+      generatedSourceUrl.current = resultUrl;
+      longCaptureSource.current = result.png;
+      setEditorSourceUrl(resultUrl);
+      setHistory(createEditorHistory());
+      setSelection({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
+      if (result.partial) setError('长截图已停止，已保留部分结果');
+    } catch {
+      setError('长截图失败，请重试');
+    } finally {
+      setLongCaptureProgress(null);
+    }
+  }, [bridge, longCaptureProgress, selection]);
+
   const handleAction = useCallback(
     (action: ToolbarAction) => {
       if (['rectangle', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
@@ -198,18 +242,22 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       if (action === 'redo') setHistory((current) => redo(current));
       if (action === 'copy' || action === 'complete') void copyAndClose();
       if (action === 'save') void save();
+      if (action === 'long-capture') void startLongCapture();
       if (action === 'cancel') void bridge.closeOverlay();
       if (action === 'ocr' || action === 'translate') {
         setError('云端功能将在后续阶段接入');
       }
     },
-    [bridge, copyAndClose, save],
+    [bridge, copyAndClose, save, startLongCapture],
   );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Enter') void copyAndClose();
-      if (event.key === 'Escape') void bridge.closeOverlay();
+      if (event.key === 'Escape') {
+        if (longCaptureProgress) void bridge.stopLongCapture();
+        else void bridge.closeOverlay();
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         void save();
@@ -221,7 +269,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bridge, copyAndClose, save]);
+  }, [bridge, copyAndClose, longCaptureProgress, save]);
 
   const showToolbar = selection && selection.width > 0 && selection.height > 0;
   const viewportBounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
@@ -233,7 +281,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
 
   return (
     <main className="screenshot-editor" aria-label="截图编辑器">
-      {sourceUrl ? <img ref={sourceImage} className="screenshot-source" src={sourceUrl} alt="" /> : null}
+      {editorSourceUrl ? <img ref={sourceImage} className="screenshot-source" src={editorSourceUrl} alt="" /> : null}
       <canvas
         ref={annotationCanvas}
         className={`annotation-canvas${showToolbar ? ' annotation-canvas--active' : ''}`}
@@ -267,7 +315,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
           }}
         />
       ) : null}
-      {showToolbar ? (
+      {showToolbar && !longCaptureProgress ? (
         <div
           className="toolbar-positioner"
           style={{ left: Math.max(8, selection.x + selection.width - 570), top: toolbarTop }}
@@ -278,6 +326,13 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
             canRedo={history.future.length > 0}
             onAction={handleAction}
           />
+        </div>
+      ) : null}
+      {longCaptureProgress ? (
+        <div className="long-capture-status" role="status" aria-label="长截图进度" aria-live="polite">
+          <span className="long-capture-status__spinner" aria-hidden="true" />
+          <span>{longCaptureProgress.frameCount} 帧 · {longCaptureProgress.stitchedHeight} px</span>
+          <button type="button" onClick={() => void bridge.stopLongCapture()}>停止</button>
         </div>
       ) : null}
       {error ? <div className="editor-alert" role="alert">{error}</div> : null}

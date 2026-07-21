@@ -265,7 +265,10 @@ impl ChunkedStitcher {
         Ok(())
     }
 
-    pub fn finish(self) -> Result<RgbaFrame, MatchError> {
+    pub fn finish(mut self) -> Result<RgbaFrame, MatchError> {
+        if let Some(footer) = self.pending_footer.take() {
+            self.append(footer, 0)?;
+        }
         let width = self.width.ok_or(MatchError::InvalidFrame)?;
         let capacity = width as usize * self.height as usize * 4;
         let mut pixels = Vec::with_capacity(capacity);
