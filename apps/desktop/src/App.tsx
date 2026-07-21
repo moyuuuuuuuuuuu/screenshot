@@ -39,6 +39,11 @@ export function App() {
       setSourceUrl(captureFrameSource(event.payload));
       setSession((current) => current + 1);
     }).then(retainUnlisten).catch(() => undefined);
+    void listen('capture-started', () => {
+      setCaptureError(null);
+      setSourceUrl('');
+      setSession((current) => current + 1);
+    }).then(retainUnlisten).catch(() => undefined);
     void listen<string>('capture-error', (event) => {
       setCaptureError(event.payload);
     }).then(retainUnlisten).catch(() => undefined);

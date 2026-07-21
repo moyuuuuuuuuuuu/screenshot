@@ -147,7 +147,12 @@ describe('ScreenshotEditor', () => {
       expect.any(Function),
     );
     await screen.findByTestId('selection-surface');
-    expect(container.querySelector('.screenshot-source')).toHaveAttribute('src', 'blob:long-capture');
+    const longImage = container.querySelector('.screenshot-source') as HTMLImageElement;
+    expect(longImage).toHaveAttribute('src', 'blob:long-capture');
+    Object.defineProperty(longImage, 'naturalWidth', { configurable: true, value: 200 });
+    Object.defineProperty(longImage, 'naturalHeight', { configurable: true, value: 1200 });
+    fireEvent.load(longImage);
+    expect(longImage).toHaveStyle({ left: '448px', top: '0px', width: '128px', height: '768px' });
     expect(createObjectUrl).toHaveBeenCalledOnce();
   });
 

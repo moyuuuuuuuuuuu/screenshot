@@ -24,7 +24,7 @@ button { font: inherit; }
 }
 
 .screenshot-source { object-fit: fill; user-select: none; pointer-events: none; }
-.screenshot-source--long { object-fit: contain; }
+.screenshot-source--long { inset: auto; object-fit: fill; }
 .annotation-canvas { pointer-events: none; touch-action: none; }
 .annotation-canvas--active { pointer-events: auto; cursor: crosshair; }
 .selection-surface { cursor: crosshair; background: rgba(0, 0, 0, 0.34); touch-action: none; }

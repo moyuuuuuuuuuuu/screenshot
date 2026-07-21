@@ -20,6 +20,7 @@ pub fn request_capture(app: &tauri::AppHandle) {
         state.finish_capture();
         return;
     };
+    let _ = window.emit("capture-started", ());
     if let Err(error) = window.hide() {
         state.finish_capture();
         let _ = window.emit("capture-error", format!("failed to hide overlay: {error}"));
@@ -28,7 +29,7 @@ pub fn request_capture(app: &tauri::AppHandle) {
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        std::thread::sleep(Duration::from_millis(80));
+        std::thread::sleep(Duration::from_millis(250));
         let result = capture::capture_desktop().await;
         let window = app_handle.get_webview_window("overlay");
 

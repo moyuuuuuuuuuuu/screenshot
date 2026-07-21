@@ -345,6 +345,17 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
           className={`screenshot-source${longCaptureSource.current ? ' screenshot-source--long' : ''}`}
           src={editorSourceUrl}
           alt=""
+          style={longCaptureSource.current
+            ? longCaptureBounds
+              ? {
+                  left: longCaptureBounds.x,
+                  top: longCaptureBounds.y,
+                  width: longCaptureBounds.width,
+                  height: longCaptureBounds.height,
+                  visibility: 'visible',
+                }
+              : { visibility: 'hidden' }
+            : undefined}
           onLoad={handleSourceLoad}
         />
       ) : null}

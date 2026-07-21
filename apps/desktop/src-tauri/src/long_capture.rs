@@ -326,7 +326,7 @@ pub async fn start_long_capture(
         window
             .hide()
             .map_err(|error| format!("failed to hide overlay: {error}"))?;
-        std::thread::sleep(Duration::from_millis(80));
+        std::thread::sleep(Duration::from_millis(250));
         run_capture(&runtime, region)
     })();
     let _ = window.show();

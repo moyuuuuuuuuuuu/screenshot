@@ -50,6 +50,9 @@ describe('App', () => {
       'data:image/png;base64,first',
     );
 
+    act(() => tauriListeners.get('capture-started')?.({ payload: undefined }));
+    expect(container.querySelector('.screenshot-source')).not.toBeInTheDocument();
+
     act(() => tauriListeners.get('capture-ready')?.({ payload: [{ pngBase64: 'second' }] }));
     expect(container.querySelector('.screenshot-source')).toHaveAttribute(
       'src',
