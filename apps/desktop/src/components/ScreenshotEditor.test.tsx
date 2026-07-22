@@ -257,6 +257,82 @@ describe('ScreenshotEditor', () => {
     expect(bridge.copyPng).not.toHaveBeenCalled();
   });
 
+  it('preserves the completed long image when native clipboard output fails', async () => {
+    const createObjectUrl = vi.fn().mockReturnValue('blob:clipboard-retry');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    const bridge = createBridge({
+      startLongCapture: vi.fn().mockResolvedValue({
+        png: new Blob(['long'], { type: 'image/png' }),
+        partial: false,
+        action: 'edit',
+        clipboardError: 'clipboard busy',
+      }),
+    });
+    const { container } = render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '长截图复制失败：clipboard busy，已保留长图，可重试复制或保存',
+    );
+    expect(container.querySelector('.screenshot-source')).toHaveAttribute('src', 'blob:clipboard-retry');
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('preserves the completed long image when mask cleanup fails', async () => {
+    const createObjectUrl = vi.fn().mockReturnValue('blob:cleanup-retry');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    const bridge = createBridge({
+      startLongCapture: vi.fn().mockResolvedValue({
+        png: new Blob(['long'], { type: 'image/png' }),
+        partial: false,
+        action: 'edit',
+        cleanupError: 'mask hide failed',
+        clipboardError: 'clipboard busy',
+      }),
+    });
+    const { container } = render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '长截图窗口清理失败：mask hide failed；长截图复制失败：clipboard busy，已保留长图，可重试复制或保存',
+    );
+    expect(container.querySelector('.screenshot-source')).toHaveAttribute('src', 'blob:cleanup-retry');
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('ignores Enter in the restored overlay while native Finish is still pending', async () => {
+    let resolveCapture: ((value: { png: Blob; partial: boolean; action: 'finish' }) => void) | undefined;
+    const bridge = createBridge({
+      startLongCapture: vi.fn().mockImplementation(() => new Promise((resolve) => {
+        resolveCapture = resolve;
+      })),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+
+    await userEvent.keyboard('{Enter}{Enter}{Control>}s{/Control}{Control>}z{/Control}');
+
+    expect(bridge.copyPng).not.toHaveBeenCalled();
+    expect(bridge.savePng).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+    resolveCapture?.({ png: new Blob(['long']), partial: false, action: 'finish' });
+    await waitFor(() => expect(bridge.closeOverlay).toHaveBeenCalledOnce());
+  });
+
   it('Esc cancels long capture and exits the overlay', async () => {
     let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
     let finishCapture: ((result: { png: Blob; partial: boolean; action: 'edit' }) => void) | undefined;
@@ -313,6 +389,26 @@ describe('ScreenshotEditor', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '长截图失败：selection must fit within one monitor',
+    );
+  });
+
+  it('shows cleanup failures that happen while cancelling long capture', async () => {
+    const bridge = createBridge({
+      startLongCapture: vi.fn().mockRejectedValue(
+        'long capture cancelled; cleanup: failed to hide scroll-mask-right',
+      ),
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '长截图失败：long capture cancelled; cleanup: failed to hide scroll-mask-right',
     );
   });
 });

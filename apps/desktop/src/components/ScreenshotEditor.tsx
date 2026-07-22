@@ -308,12 +308,24 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       setEditorSourceUrl(resultUrl);
       dispatchCapture({ type: 'scrollEditRequested', imageUrl: resultUrl });
       setHistory(createEditorHistory());
-      if (result.partial) setError('长截图已停止，已保留部分结果');
+      if (result.cleanupError || result.clipboardError) {
+        const completionErrors = [
+          result.cleanupError ? `长截图窗口清理失败：${result.cleanupError}` : null,
+          result.clipboardError ? `长截图复制失败：${result.clipboardError}` : null,
+        ].filter((message): message is string => Boolean(message));
+        const recovery = result.clipboardError
+          ? '，已保留长图，可重试复制或保存'
+          : '，已保留长图';
+        setError(`${completionErrors.join('；')}${recovery}`);
+      } else if (result.partial) {
+        setError('长截图已停止，已保留部分结果');
+      }
     } catch (captureError) {
       dispatchCapture({ type: 'scrollCancelled' });
-      if (errorMessage(captureError).toLowerCase().includes('cancelled')) return;
+      const message = errorMessage(captureError);
+      if (message.toLowerCase() === 'long capture cancelled') return;
       console.error('Long capture failed', captureError);
-      setError(`长截图失败：${errorMessage(captureError)}`);
+      setError(`长截图失败：${message}`);
     } finally {
       setLongCaptureProgress(null);
     }
@@ -404,6 +416,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
 
   const handleAction = useCallback(
     (action: WechatToolbarAction) => {
+      if (longCaptureProgress) return;
       if (['rectangle', 'ellipse', 'emoji', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
         setActiveTool(action as Tool);
         setTextPosition(null);
@@ -418,19 +431,24 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       if (action === 'pin') void pinSelection();
       if (action === 'share') void shareSelection();
     },
-    [bridge, copyAndClose, pinSelection, runOcr, save, shareSelection, startLongCapture],
+    [bridge, copyAndClose, longCaptureProgress, pinSelection, runOcr, save, shareSelection, startLongCapture],
   );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Enter') void copyAndClose();
       if (event.key === 'Escape') {
         if (longCaptureProgress || longCaptureCancelInFlight.current) {
           void cancelLongCaptureAndClose();
         } else {
           void bridge.closeOverlay();
         }
+        return;
       }
+      if (longCaptureProgress || longCaptureCancelInFlight.current) {
+        event.preventDefault();
+        return;
+      }
+      if (event.key === 'Enter') void copyAndClose();
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         void save();

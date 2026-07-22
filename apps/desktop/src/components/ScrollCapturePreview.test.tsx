@@ -28,8 +28,8 @@ describe('ScrollCapturePreview', () => {
 
     expect(await screen.findByRole('img', { name: '累计长截图预览' }))
       .toHaveClass('scroll-sidecar__preview');
-    expect(screen.getByRole('img', { name: '长截图导航' }))
-      .toHaveClass('scroll-sidecar__navigator');
+    expect(screen.queryByRole('img', { name: '长截图导航' })).not.toBeInTheDocument();
+    expect(document.querySelector('.scroll-sidecar__navigator-wrap')).not.toBeInTheDocument();
     expect(screen.getByRole('toolbar', { name: '长截图操作' }))
       .toHaveClass('scroll-sidecar__actions');
     expect(document.querySelector('.scroll-preview__stage')).not.toBeInTheDocument();
@@ -42,14 +42,17 @@ describe('ScrollCapturePreview', () => {
       expect(icon).toHaveClass('lucide');
     }
 
-    for (const [name, method] of [
-      ['编辑长截图', desktop.editLongCapture],
-      ['保存长截图', desktop.saveLongCapture],
-      ['取消长截图', desktop.cancelLongCapture],
-      ['完成长截图', desktop.finishLongCapture],
-    ] as const) {
-      await userEvent.click(screen.getByRole('button', { name }));
-      expect(method).toHaveBeenCalledOnce();
-    }
+  });
+
+  it('submits only the first terminal action', async () => {
+    const desktop = bridge();
+    render(<ScrollCapturePreview bridge={desktop} side="right" />);
+
+    await userEvent.click(screen.getByRole('button', { name: '完成长截图' }));
+    await userEvent.click(screen.getByRole('button', { name: '取消长截图' }));
+
+    expect(desktop.finishLongCapture).toHaveBeenCalledOnce();
+    expect(desktop.cancelLongCapture).not.toHaveBeenCalled();
+    for (const button of screen.getAllByRole('button')) expect(button).toBeDisabled();
   });
 });

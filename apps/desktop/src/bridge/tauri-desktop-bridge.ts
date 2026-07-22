@@ -92,16 +92,28 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
         window.clearInterval(progressTimer);
       }
       if (!value || typeof value !== 'object') throw new Error('invalid long capture result');
-      const result = value as { pngBytes?: unknown; partial?: unknown; action?: unknown };
+      const result = value as {
+        pngBytes?: unknown; partial?: unknown; action?: unknown;
+        clipboardError?: unknown; cleanupError?: unknown;
+      };
       const action = result.action ?? 'edit';
       if (!Array.isArray(result.pngBytes) || typeof result.partial !== 'boolean'
-        || !['edit', 'save', 'finish'].includes(action as string)) {
+        || !['edit', 'save', 'finish'].includes(action as string)
+        || (result.clipboardError != null && typeof result.clipboardError !== 'string')
+        || (result.cleanupError != null && typeof result.cleanupError !== 'string')
+        || (action !== 'edit' && (result.clipboardError != null || result.cleanupError != null))) {
         throw new Error('invalid long capture result');
       }
       return {
         png: new Blob([new Uint8Array(result.pngBytes as number[])], { type: 'image/png' }),
         partial: result.partial,
         action: action as LongCaptureResult['action'],
+        ...(typeof result.clipboardError === 'string'
+          ? { clipboardError: result.clipboardError }
+          : {}),
+        ...(typeof result.cleanupError === 'string'
+          ? { cleanupError: result.cleanupError }
+          : {}),
       } satisfies LongCaptureResult;
     },
     async stopLongCapture() {

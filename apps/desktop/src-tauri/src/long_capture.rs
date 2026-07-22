@@ -10,7 +10,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
 use crate::preview_windows::{
-    open_capture_mask_windows, open_preview_window, ScreenRect, MASK_WINDOW_LABELS,
+    deactivate_capture_mask_windows, open_capture_mask_windows, open_preview_window, ScreenRect,
 };
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
@@ -92,6 +92,8 @@ pub struct LongCaptureResult {
     png_bytes: Vec<u8>,
     partial: bool,
     action: LongCaptureAction,
+    clipboard_error: Option<String>,
+    cleanup_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,20 +135,82 @@ fn finalize_capture_result(
     action: LongCaptureAction,
     copy_png: impl FnOnce(&[u8]) -> Result<(), String>,
 ) -> Result<LongCaptureResult, String> {
-    if action == LongCaptureAction::Finish {
-        copy_png(&png_bytes)?;
-    }
+    let (action, clipboard_error) = if action == LongCaptureAction::Finish {
+        match copy_png(&png_bytes) {
+            Ok(()) => (LongCaptureAction::Finish, None),
+            Err(error) => (LongCaptureAction::Edit, Some(error)),
+        }
+    } else {
+        (action, None)
+    };
     Ok(LongCaptureResult {
         png_bytes,
         partial,
         action,
+        clipboard_error,
+        cleanup_error: None,
     })
+}
+
+fn recover_from_cleanup_failure(mut result: LongCaptureResult, error: String) -> LongCaptureResult {
+    result.action = LongCaptureAction::Edit;
+    result.cleanup_error = Some(error);
+    result
+}
+
+fn resolve_capture_cleanup(
+    capture_result: Result<LongCaptureResult, String>,
+    cleanup_result: Result<(), String>,
+) -> Result<LongCaptureResult, String> {
+    match (capture_result, cleanup_result) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Ok(result), Err(error)) => Ok(recover_from_cleanup_failure(result, error)),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(cleanup_error)) => Err(format!("{error}; cleanup: {cleanup_error}")),
+    }
+}
+
+fn restore_overlay_for_cleanup_diagnostic(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    diagnostic: &str,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    if let Err(error) = platform::restore_window_capture(window) {
+        errors.push(error);
+    }
+    if let Err(error) = app.emit("long-capture-presentation", false) {
+        errors.push(format!(
+            "failed to restore long capture presentation: {error}"
+        ));
+    }
+    if let Err(error) = window.set_ignore_cursor_events(false) {
+        errors.push(format!("failed to restore overlay input: {error}"));
+    }
+    if let Err(error) = window.show() {
+        errors.push(format!("failed to show diagnostic overlay: {error}"));
+    }
+    if let Err(error) = window.set_focus() {
+        errors.push(format!("failed to focus diagnostic overlay: {error}"));
+    }
+    if let Err(error) = window.emit("capture-error", diagnostic) {
+        errors.push(format!("failed to emit cleanup diagnostic: {error}"));
+    }
+    finish_cleanup_errors(errors)
+}
+
+fn finish_cleanup_errors(errors: Vec<String>) -> Result<(), String> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 struct CaptureCleanup<Restore, Close>
 where
-    Restore: FnOnce(),
-    Close: FnOnce(),
+    Restore: FnOnce() -> Result<(), String>,
+    Close: FnOnce() -> Result<(), String>,
 {
     restore_overlay: Option<Restore>,
     close_controls: Option<Close>,
@@ -154,8 +218,8 @@ where
 
 impl<Restore, Close> CaptureCleanup<Restore, Close>
 where
-    Restore: FnOnce(),
-    Close: FnOnce(),
+    Restore: FnOnce() -> Result<(), String>,
+    Close: FnOnce() -> Result<(), String>,
 {
     fn new(restore_overlay: Restore, close_controls: Close) -> Self {
         Self {
@@ -163,19 +227,34 @@ where
             close_controls: Some(close_controls),
         }
     }
+
+    fn complete(mut self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if let Some(close) = self.close_controls.take() {
+            if let Err(error) = close() {
+                errors.push(error);
+            }
+        }
+        if let Some(restore) = self.restore_overlay.take() {
+            if let Err(error) = restore() {
+                errors.push(error);
+            }
+        }
+        finish_cleanup_errors(errors)
+    }
 }
 
 impl<Restore, Close> Drop for CaptureCleanup<Restore, Close>
 where
-    Restore: FnOnce(),
-    Close: FnOnce(),
+    Restore: FnOnce() -> Result<(), String>,
+    Close: FnOnce() -> Result<(), String>,
 {
     fn drop(&mut self) {
         if let Some(close) = self.close_controls.take() {
-            close();
+            let _ = close();
         }
         if let Some(restore) = self.restore_overlay.take() {
-            restore();
+            let _ = restore();
         }
     }
 }
@@ -245,14 +324,29 @@ impl LongCaptureRuntime {
         }
     }
 
-    pub fn request_stop(&self) {
-        self.stop_requested.store(true, Ordering::Release);
+    fn request_terminal_action(&self, action: LongCaptureAction) -> bool {
+        if self
+            .action
+            .compare_exchange(
+                LongCaptureAction::None.code(),
+                action.code(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        if action == LongCaptureAction::Cancel {
+            self.cancel_requested.store(true, Ordering::Release);
+        } else {
+            self.stop_requested.store(true, Ordering::Release);
+        }
+        true
     }
 
     pub fn request_cancel(&self) {
-        self.action
-            .store(LongCaptureAction::Cancel.code(), Ordering::Release);
-        self.cancel_requested.store(true, Ordering::Release);
+        self.request_terminal_action(LongCaptureAction::Cancel);
     }
 
     pub fn is_cancel_requested(&self) -> bool {
@@ -264,19 +358,13 @@ impl LongCaptureRuntime {
     }
 
     pub fn request_edit(&self) {
-        self.action
-            .store(LongCaptureAction::Edit.code(), Ordering::Release);
-        self.request_stop();
+        self.request_terminal_action(LongCaptureAction::Edit);
     }
     pub fn request_save(&self) {
-        self.action
-            .store(LongCaptureAction::Save.code(), Ordering::Release);
-        self.request_stop();
+        self.request_terminal_action(LongCaptureAction::Save);
     }
     pub fn request_finish(&self) {
-        self.action
-            .store(LongCaptureAction::Finish.code(), Ordering::Release);
-        self.request_stop();
+        self.request_terminal_action(LongCaptureAction::Finish);
     }
     fn requested_action(&self) -> LongCaptureAction {
         LongCaptureAction::from_code(self.action.load(Ordering::Acquire))
@@ -492,15 +580,21 @@ fn prepare_capture_windows<M, P>(
 fn cleanup_capture_windows(
     reusable_labels: &[&str],
     ephemeral_labels: &[&str],
-    mut hide: impl FnMut(&str),
-    mut close: impl FnMut(&str),
-) {
+    mut hide: impl FnMut(&str) -> Result<(), String>,
+    mut close: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
     for label in reusable_labels.iter().chain(ephemeral_labels) {
-        hide(label);
+        if let Err(error) = hide(label) {
+            errors.push(error);
+        }
     }
     for label in ephemeral_labels {
-        close(label);
+        if let Err(error) = close(label) {
+            errors.push(error);
+        }
     }
+    finish_cleanup_errors(errors)
 }
 
 #[cfg(test)]
@@ -703,96 +797,158 @@ pub async fn start_long_capture(
         let escape_registered = app.global_shortcut().register("Escape").is_ok();
         let enter_registered = app.global_shortcut().register("Enter").is_ok();
         let cleanup = CaptureCleanup::new(
-            move || match overlay_cleanup(
-                restore_app
-                    .state::<LongCaptureRuntime>()
-                    .is_cancel_requested(),
-            ) {
-                OverlayCleanup::Restore => {
-                    let _ = platform::restore_window_capture(&restore_window);
-                    let _ = restore_app.emit("long-capture-presentation", false);
-                    let _ = restore_window.set_ignore_cursor_events(false);
-                    let _ = restore_window.show();
-                    let _ = restore_window.set_focus();
-                }
-                OverlayCleanup::Hide => {
-                    let _ = platform::restore_window_capture(&restore_window);
-                    let _ = restore_window.set_ignore_cursor_events(false);
-                    crate::app_state::emit_capture_session_reset(&restore_app, &restore_window);
-                    let _ = restore_app.emit("long-capture-presentation", false);
-                    let _ = restore_window.hide();
-                }
-            },
             move || {
-                cleanup_capture_windows(
-                    &MASK_WINDOW_LABELS,
-                    &["scroll-capture-preview"],
-                    |label| {
-                        if let Some(window) = close_app.get_webview_window(label) {
-                            let _ = window.hide();
+                let mut errors = Vec::new();
+                match overlay_cleanup(
+                    restore_app
+                        .state::<LongCaptureRuntime>()
+                        .is_cancel_requested(),
+                ) {
+                    OverlayCleanup::Restore => {
+                        if let Err(error) = platform::restore_window_capture(&restore_window) {
+                            errors.push(error);
                         }
-                    },
-                    |label| {
-                        if let Some(window) = close_app.get_webview_window(label) {
-                            let _ = window.close();
+                        if let Err(error) = restore_app.emit("long-capture-presentation", false) {
+                            errors.push(format!(
+                                "failed to restore long capture presentation: {error}"
+                            ));
                         }
-                    },
-                );
-                if escape_registered {
-                    let _ = unregister_app.global_shortcut().unregister("Escape");
-                }
-                if enter_registered {
-                    let _ = unregister_app.global_shortcut().unregister("Enter");
-                }
-            },
-        );
-        let origin = window
-            .outer_position()
-            .map_err(|error| format!("failed to read overlay position: {error}"))?;
-        let scale_factor = window
-            .scale_factor()
-            .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
-        let region = region.to_physical(origin.x, origin.y, scale_factor);
-        let selection = ScreenRect {
-            x: region.x.round() as i32,
-            y: region.y.round() as i32,
-            width: region.width.round() as i32,
-            height: region.height.round() as i32,
-        };
-        let monitor = capture_monitor_rect(&app, region)?;
-        let capture_windows = prepare_capture_windows(
-            || {
-                let masks = open_capture_mask_windows(&app, selection, monitor)?;
-                for mask in &masks {
-                    if let Err(error) = platform::exclude_window_from_capture(mask) {
-                        for mask in &masks {
-                            let _ = mask.hide();
+                        if let Err(error) = restore_window.set_ignore_cursor_events(false) {
+                            errors.push(format!("failed to restore overlay input: {error}"));
                         }
-                        return Err(error);
+                        if let Err(error) = restore_window.show() {
+                            errors.push(format!("failed to show overlay: {error}"));
+                        }
+                        if let Err(error) = restore_window.set_focus() {
+                            errors.push(format!("failed to focus overlay: {error}"));
+                        }
+                    }
+                    OverlayCleanup::Hide => {
+                        if let Err(error) = platform::restore_window_capture(&restore_window) {
+                            errors.push(error);
+                        }
+                        if let Err(error) = restore_window.set_ignore_cursor_events(false) {
+                            errors.push(format!("failed to restore overlay input: {error}"));
+                        }
+                        crate::app_state::emit_capture_session_reset(&restore_app, &restore_window);
+                        if let Err(error) = restore_app.emit("long-capture-presentation", false) {
+                            errors.push(format!(
+                                "failed to clear long capture presentation: {error}"
+                            ));
+                        }
+                        if let Err(error) = restore_window.hide() {
+                            errors.push(format!("failed to hide overlay: {error}"));
+                        }
                     }
                 }
-                for mask in &masks {
-                    mask.show()
-                        .map_err(|error| format!("failed to show capture mask: {error}"))?;
+                finish_cleanup_errors(errors)
+            },
+            move || {
+                let mut errors = Vec::new();
+                if let Err(error) = deactivate_capture_mask_windows(&close_app) {
+                    errors.push(format!("failed to deactivate long capture masks: {error}"));
                 }
-                Ok(masks)
+                if let Err(error) = cleanup_capture_windows(
+                    &[],
+                    &["scroll-capture-preview"],
+                    |label| {
+                        let Some(window) = close_app.get_webview_window(label) else {
+                            return Ok(());
+                        };
+                        window
+                            .hide()
+                            .map_err(|error| format!("failed to hide {label}: {error}"))
+                    },
+                    |label| {
+                        let Some(window) = close_app.get_webview_window(label) else {
+                            return Ok(());
+                        };
+                        window
+                            .close()
+                            .map_err(|error| format!("failed to close {label}: {error}"))
+                    },
+                ) {
+                    errors.push(error);
+                }
+                if escape_registered {
+                    if let Err(error) = unregister_app.global_shortcut().unregister("Escape") {
+                        errors.push(format!("failed to unregister Escape: {error}"));
+                    }
+                }
+                if enter_registered {
+                    if let Err(error) = unregister_app.global_shortcut().unregister("Enter") {
+                        errors.push(format!("failed to unregister Enter: {error}"));
+                    }
+                }
+                let result = finish_cleanup_errors(errors);
+                if let Err(error) = &result {
+                    let _ = close_app.emit("capture-error", error);
+                }
+                result
             },
-            || {
-                let preview = open_controls_window(&app, region, monitor)?;
-                platform::exclude_window_from_capture(&preview)?;
-                Ok(preview)
-            },
-            || {
-                window
-                    .hide()
-                    .map_err(|error| format!("failed to hide overlay for long capture: {error}"))
-            },
-        )?;
-        std::thread::sleep(Duration::from_millis(150));
-        let capture_result = run_capture(&runtime, region);
-        drop(cleanup);
-        drop(capture_windows);
-        capture_result
+        );
+        let capture_result: Result<LongCaptureResult, String> = (|| {
+            let origin = window
+                .outer_position()
+                .map_err(|error| format!("failed to read overlay position: {error}"))?;
+            let scale_factor = window
+                .scale_factor()
+                .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
+            let region = region.to_physical(origin.x, origin.y, scale_factor);
+            let selection = ScreenRect {
+                x: region.x.round() as i32,
+                y: region.y.round() as i32,
+                width: region.width.round() as i32,
+                height: region.height.round() as i32,
+            };
+            let monitor = capture_monitor_rect(&app, region)?;
+            let capture_windows = prepare_capture_windows(
+                || {
+                    let masks = open_capture_mask_windows(&app, selection, monitor)?;
+                    for mask in &masks {
+                        if let Err(error) = platform::exclude_window_from_capture(mask) {
+                            for mask in &masks {
+                                let _ = mask.hide();
+                            }
+                            return Err(error);
+                        }
+                    }
+                    for mask in &masks {
+                        mask.show()
+                            .map_err(|error| format!("failed to show capture mask: {error}"))?;
+                    }
+                    Ok(masks)
+                },
+                || {
+                    let preview = open_controls_window(&app, region, monitor)?;
+                    platform::exclude_window_from_capture(&preview)?;
+                    Ok(preview)
+                },
+                || {
+                    window.hide().map_err(|error| {
+                        format!("failed to hide overlay for long capture: {error}")
+                    })
+                },
+            )?;
+            std::thread::sleep(Duration::from_millis(150));
+            let capture_result = run_capture(&runtime, region);
+            drop(capture_windows);
+            capture_result
+        })();
+        let mut cleanup_result = cleanup.complete();
+        if matches!(&capture_result, Err(error) if error == "long capture cancelled") {
+            if let Err(cleanup_error) = &cleanup_result {
+                let diagnostic = format!("long capture cancelled; cleanup: {cleanup_error}");
+                if let Err(restore_error) =
+                    restore_overlay_for_cleanup_diagnostic(&app, &window, &diagnostic)
+                {
+                    cleanup_result = Err(format!(
+                        "{cleanup_error}; diagnostic overlay: {restore_error}"
+                    ));
+                }
+            }
+        }
+        resolve_capture_cleanup(capture_result, cleanup_result)
     })();
     runtime.finish();
     result
@@ -837,8 +993,9 @@ mod tests {
     use super::{
         append_stable_candidate, cleanup_capture_windows, crop_region, finalize_capture_result,
         match_motion_candidate, observation_requires_match, overlay_cleanup,
-        prepare_capture_windows, run_cleanup_callbacks, should_refresh_preview, termination,
-        CaptureCleanup, CaptureRegion, CaptureTermination, LongCaptureAction, OverlayCleanup,
+        prepare_capture_windows, recover_from_cleanup_failure, resolve_capture_cleanup,
+        run_cleanup_callbacks, should_refresh_preview, termination, CaptureCleanup, CaptureRegion,
+        CaptureTermination, LongCaptureAction, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
     use crate::region_observer::{Observation, RegionObserver};
@@ -963,15 +1120,53 @@ mod tests {
 
     #[test]
     fn edit_save_cancel_and_finish_are_distinct_runtime_actions() {
+        for (request, expected) in [
+            (
+                super::LongCaptureRuntime::request_edit as fn(&super::LongCaptureRuntime),
+                super::LongCaptureAction::Edit,
+            ),
+            (
+                super::LongCaptureRuntime::request_save as fn(&super::LongCaptureRuntime),
+                super::LongCaptureAction::Save,
+            ),
+            (
+                super::LongCaptureRuntime::request_cancel as fn(&super::LongCaptureRuntime),
+                super::LongCaptureAction::Cancel,
+            ),
+            (
+                super::LongCaptureRuntime::request_finish as fn(&super::LongCaptureRuntime),
+                super::LongCaptureAction::Finish,
+            ),
+        ] {
+            let runtime = super::LongCaptureRuntime::default();
+            request(&runtime);
+            assert_eq!(runtime.requested_action(), expected);
+        }
+    }
+
+    #[test]
+    fn first_terminal_action_wins_when_finish_precedes_cancel() {
         let runtime = super::LongCaptureRuntime::default();
-        runtime.request_edit();
-        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Edit);
-        runtime.request_save();
-        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Save);
-        runtime.request_cancel();
-        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Cancel);
+
         runtime.request_finish();
-        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Finish);
+        runtime.request_cancel();
+
+        assert_eq!(runtime.requested_action(), LongCaptureAction::Finish);
+        assert!(!runtime.is_cancel_requested());
+        assert!(runtime
+            .stop_requested
+            .load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn first_terminal_action_wins_when_cancel_precedes_finish() {
+        let runtime = super::LongCaptureRuntime::default();
+
+        runtime.request_cancel();
+        runtime.request_finish();
+
+        assert_eq!(runtime.requested_action(), LongCaptureAction::Cancel);
+        assert!(runtime.is_cancel_requested());
     }
 
     #[test]
@@ -994,17 +1189,18 @@ mod tests {
     }
 
     #[test]
-    fn finish_copy_failure_prevents_success() {
-        let error = finalize_capture_result(
+    fn finish_copy_failure_preserves_the_long_image_for_retry() {
+        let result = finalize_capture_result(
             vec![137, 80, 78, 71],
             false,
             LongCaptureAction::Finish,
             |_| Err("clipboard busy".to_string()),
         )
-        .err()
         .unwrap();
 
-        assert_eq!(error, "clipboard busy");
+        assert_eq!(result.png_bytes, vec![137, 80, 78, 71]);
+        assert_eq!(result.action, LongCaptureAction::Edit);
+        assert_eq!(result.clipboard_error.as_deref(), Some("clipboard busy"));
     }
 
     #[test]
@@ -1109,11 +1305,69 @@ mod tests {
             let restore_events = Rc::clone(&events);
             let close_events = Rc::clone(&events);
             let _cleanup = CaptureCleanup::new(
-                move || restore_events.borrow_mut().push("overlay"),
-                move || close_events.borrow_mut().push("controls"),
+                move || {
+                    restore_events.borrow_mut().push("overlay");
+                    Ok(())
+                },
+                move || {
+                    close_events.borrow_mut().push("controls");
+                    Ok(())
+                },
             );
         }
         assert_eq!(*events.borrow(), vec!["controls", "overlay"]);
+    }
+
+    #[test]
+    fn explicit_cleanup_reports_failures_after_attempting_every_step() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let restore_events = Rc::clone(&events);
+        let close_events = Rc::clone(&events);
+        let cleanup = CaptureCleanup::new(
+            move || {
+                restore_events.borrow_mut().push("overlay");
+                Err("overlay restore failed".to_string())
+            },
+            move || {
+                close_events.borrow_mut().push("controls");
+                Err("mask hide failed".to_string())
+            },
+        );
+
+        let error = cleanup.complete().unwrap_err();
+
+        assert_eq!(*events.borrow(), vec!["controls", "overlay"]);
+        assert_eq!(error, "mask hide failed; overlay restore failed");
+    }
+
+    #[test]
+    fn cleanup_failure_preserves_the_png_and_returns_to_editing() {
+        let result = finalize_capture_result(
+            vec![137, 80, 78, 71],
+            false,
+            LongCaptureAction::Finish,
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        let recovered = recover_from_cleanup_failure(result, "mask hide failed".to_string());
+
+        assert_eq!(recovered.png_bytes, vec![137, 80, 78, 71]);
+        assert_eq!(recovered.action, LongCaptureAction::Edit);
+        assert_eq!(recovered.cleanup_error.as_deref(), Some("mask hide failed"));
+    }
+
+    #[test]
+    fn preparation_and_cleanup_failures_are_both_returned() {
+        let result = resolve_capture_cleanup(
+            Err("preview exclusion failed".to_string()),
+            Err("mask hide failed".to_string()),
+        );
+
+        assert_eq!(
+            result.err().unwrap(),
+            "preview exclusion failed; cleanup: mask hide failed"
+        );
     }
 
     #[test]
@@ -1122,9 +1376,16 @@ mod tests {
         cleanup_capture_windows(
             &["scroll-mask-top", "scroll-mask-right"],
             &["scroll-capture-preview"],
-            |label| events.borrow_mut().push(format!("hide:{label}")),
-            |label| events.borrow_mut().push(format!("close:{label}")),
-        );
+            |label| {
+                events.borrow_mut().push(format!("hide:{label}"));
+                Ok(())
+            },
+            |label| {
+                events.borrow_mut().push(format!("close:{label}"));
+                Ok(())
+            },
+        )
+        .unwrap();
 
         assert_eq!(
             events.into_inner(),

@@ -7,6 +7,7 @@ pub(crate) const MASK_WINDOW_LABELS: [&str; 4] = [
     "scroll-mask-bottom",
     "scroll-mask-left",
 ];
+const MASK_WINDOW_OPACITY: u8 = 77;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScreenRect {
@@ -108,6 +109,49 @@ fn mask_window_lifecycle_plan(
             }
         })
         .collect()
+}
+
+fn deactivate_mask_labels(
+    labels: &[&str],
+    mut ignore_cursor: impl FnMut(&str) -> Result<(), String>,
+    mut hide: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for label in labels {
+        if let Err(error) = ignore_cursor(label) {
+            errors.push(error);
+        }
+        if let Err(error) = hide(label) {
+            errors.push(error);
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+pub(crate) fn deactivate_capture_mask_windows(app: &tauri::AppHandle) -> Result<(), String> {
+    deactivate_mask_labels(
+        &MASK_WINDOW_LABELS,
+        |label| {
+            let Some(window) = app.get_webview_window(label) else {
+                return Ok(());
+            };
+            window
+                .set_ignore_cursor_events(true)
+                .map_err(|error| format!("failed to release input for {label}: {error}"))
+        },
+        |label| {
+            let Some(window) = app.get_webview_window(label) else {
+                return Ok(());
+            };
+            window
+                .hide()
+                .map_err(|error| format!("failed to hide {label}: {error}"))
+        },
+    )
 }
 
 #[derive(Clone, Serialize)]
@@ -268,6 +312,7 @@ pub(crate) fn open_capture_mask_windows(
     selection: ScreenRect,
     monitor: ScreenRect,
 ) -> Result<Vec<tauri::WebviewWindow>, String> {
+    deactivate_capture_mask_windows(app)?;
     let layouts = mask_window_layouts(selection, monitor);
     let existing_labels = MASK_WINDOW_LABELS
         .iter()
@@ -279,9 +324,6 @@ pub(crate) fn open_capture_mask_windows(
 
     for plan in plans {
         if plan.operation == MaskWindowOperation::Hide {
-            if let Some(window) = app.get_webview_window(plan.label) {
-                let _ = window.hide();
-            }
             continue;
         }
         let layout = plan
@@ -291,10 +333,10 @@ pub(crate) fn open_capture_mask_windows(
         match result {
             Ok(window) => windows.push(window),
             Err(error) => {
-                for window in &windows {
-                    let _ = window.hide();
-                }
-                return Err(error);
+                return match deactivate_capture_mask_windows(app) {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(format!("{error}; cleanup: {cleanup_error}")),
+                };
             }
         }
     }
@@ -343,11 +385,7 @@ fn prepare_mask_window(
         }
     };
 
-    let _ = window.hide();
-    if let Err(error) = configure_mask_window(&window, layout) {
-        let _ = window.hide();
-        return Err(error);
-    }
+    configure_mask_window(&window, layout)?;
     if operation == MaskWindowOperation::Reuse {
         app.emit_to(
             layout.label,
@@ -376,16 +414,51 @@ fn configure_mask_window(window: &tauri::WebviewWindow, layout: MaskLayout) -> R
     window
         .set_ignore_cursor_events(false)
         .map_err(|error| format!("failed to block input for {}: {error}", layout.label))?;
-    crate::platform::set_window_opacity(window, 77)
+    crate::platform::set_window_opacity(window, MASK_WINDOW_OPACITY)
         .map_err(|error| format!("failed to set {} opacity: {error}", layout.label))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        mask_window_layouts, mask_window_lifecycle_plan, preview_window_layout,
-        preview_window_policy, MaskWindowOperation, PreviewLayout, PreviewSide, ScreenRect,
+        deactivate_mask_labels, mask_window_layouts, mask_window_lifecycle_plan,
+        preview_window_layout, preview_window_policy, MaskWindowOperation, PreviewLayout,
+        PreviewSide, ScreenRect, MASK_WINDOW_OPACITY,
     };
+
+    #[test]
+    fn long_capture_mask_opacity_is_thirty_percent() {
+        assert_eq!(MASK_WINDOW_OPACITY, 77);
+        assert!((f32::from(MASK_WINDOW_OPACITY) / 255.0 - 0.3).abs() < 0.005);
+    }
+
+    #[test]
+    fn mask_deactivation_attempts_every_operation_and_combines_failures() {
+        use std::cell::RefCell;
+
+        let events = RefCell::new(Vec::new());
+        let result = deactivate_mask_labels(
+            &["top", "right"],
+            |label| {
+                events.borrow_mut().push(format!("ignore:{label}"));
+                (label != "top")
+                    .then_some(())
+                    .ok_or_else(|| "top input".to_string())
+            },
+            |label| {
+                events.borrow_mut().push(format!("hide:{label}"));
+                (label != "right")
+                    .then_some(())
+                    .ok_or_else(|| "right hide".to_string())
+            },
+        );
+
+        assert_eq!(
+            events.into_inner(),
+            vec!["ignore:top", "hide:top", "ignore:right", "hide:right"]
+        );
+        assert_eq!(result.unwrap_err(), "top input; right hide");
+    }
 
     fn intersects(a: ScreenRect, b: ScreenRect) -> bool {
         a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y

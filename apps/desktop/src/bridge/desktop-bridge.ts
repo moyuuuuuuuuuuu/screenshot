@@ -16,6 +16,8 @@ export type LongCaptureResult = Readonly<{
   png: Blob;
   partial: boolean;
   action: 'edit' | 'save' | 'finish';
+  clipboardError?: string;
+  cleanupError?: string;
 }>;
 
 export type AppSettings = Readonly<{

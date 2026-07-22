@@ -35,7 +35,9 @@ describe('createTauriDesktopBridge', () => {
 
   it('starts and stops a long capture with typed PNG output', async () => {
     const invoke = vi.fn()
-      .mockResolvedValueOnce({ pngBytes: [1, 2, 3], partial: true, action: 'edit' })
+      .mockResolvedValueOnce({
+        pngBytes: [1, 2, 3], partial: true, action: 'edit', clipboardError: 'clipboard busy',
+      })
       .mockResolvedValueOnce(undefined);
     const bridge = createTauriDesktopBridge(invoke);
     const progress = vi.fn();
@@ -49,6 +51,7 @@ describe('createTauriDesktopBridge', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'stop_long_capture');
     expect(invoke).toHaveBeenNthCalledWith(3, 'cancel_long_capture');
     expect(result.partial).toBe(true);
+    expect(result.clipboardError).toBe('clipboard busy');
     expect(result.png).toMatchObject({ size: 3, type: 'image/png' });
     expect(progress).toHaveBeenCalledWith({
       frameCount: 0,
@@ -60,6 +63,18 @@ describe('createTauriDesktopBridge', () => {
       warning: false,
       slowScrollWarning: false,
     });
+  });
+
+  it('rejects an impossible Finish result carrying a clipboard error', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      pngBytes: [1, 2, 3], partial: false, action: 'finish', clipboardError: 'busy',
+    });
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.startLongCapture(
+      { x: 0, y: 0, width: 100, height: 100 },
+      vi.fn(),
+    )).rejects.toThrow('invalid long capture result');
   });
 
   it('reads expanded long capture progress', async () => {

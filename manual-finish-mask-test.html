@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Long Capture Finish Mask Test</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #f5f7fa; font: 24px/1.4 sans-serif; }
+    header { position: sticky; top: 0; height: 72px; padding: 18px 40px; color: #fff; background: #165dff; }
+    aside { padding: 20px 40px; color: #fff; background: #17233d; font-size: 16px; }
+    aside strong { display: block; margin-bottom: 8px; font-size: 18px; }
+    aside ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 32px; margin: 0; padding-left: 22px; }
+    section { height: 130px; padding: 28px 48px; border-bottom: 3px solid #fff; color: #17233d; }
+  </style>
+</head>
+<body>
+  <header>完成复制与遮罩复用测试</header>
+  <aside>
+    <strong>长截图验收清单</strong>
+    <ol>
+      <li>Enter 与绿色对勾都复制最终长图</li>
+      <li>Esc 退出后再次截图为空选区</li>
+      <li>编辑、保存与连续两次长截图正常</li>
+      <li>选区贴边时零尺寸蒙版不闪现</li>
+      <li>蒙版透明度为 0.3，退出无黑框飞散</li>
+      <li>剪贴板被占用时保留长图供重试</li>
+    </ol>
+  </aside>
+  <main id="rows"></main>
+  <script>
+    const rows = document.querySelector('#rows');
+    for (let index = 0; index < 60; index += 1) {
+      const row = document.createElement('section');
+      row.style.background = `hsl(${(index * 47) % 360} 78% 86%)`;
+      row.textContent = `唯一内容行 ${String(index + 1).padStart(2, '0')} · ${(index * 7919).toString(16)}`;
+      rows.append(row);
+    }
+  </script>
+</body>
+</html>

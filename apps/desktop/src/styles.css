@@ -121,9 +121,9 @@ button { font: inherit; }
 .pin-window { position: relative; width: 100vw; height: 100vh; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.18); background: transparent; }
 .pin-window img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; cursor: move; }
 .pin-window button { position: absolute; top: 7px; right: 7px; display: none; width: 25px; height: 25px; padding: 0; border: 0; border-radius: 50%; background: rgba(25, 25, 25, 0.72); color: #fff; font-size: 18px; cursor: pointer; }
-.scroll-sidecar { position: relative; display: grid; width: 100vw; height: 100vh; grid-template-rows: minmax(0, 1fr) minmax(72px, 30%) auto; gap: 6px; padding: 6px; overflow: hidden; border: 1px solid rgba(7, 193, 96, .75); border-radius: 6px; background: rgba(25, 25, 25, .86); }
-.scroll-sidecar__preview-wrap, .scroll-sidecar__navigator-wrap { position: relative; min-height: 0; overflow: hidden; border-radius: 4px; background: #fff; }
-.scroll-sidecar__preview, .scroll-sidecar__navigator { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+.scroll-sidecar { position: relative; display: grid; width: 100vw; height: 100vh; grid-template-rows: minmax(0, 1fr) auto; gap: 6px; padding: 6px; overflow: hidden; border: 1px solid rgba(7, 193, 96, .75); border-radius: 6px; background: rgba(25, 25, 25, .86); }
+.scroll-sidecar__preview-wrap { position: relative; min-height: 0; overflow: hidden; border-radius: 4px; background: #fff; }
+.scroll-sidecar__preview { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
 .scroll-sidecar__prompt { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); padding: 4px 6px; border-radius: 4px; background: rgba(25,25,25,.72); color: #fff; font-size: 11px; white-space: nowrap; }
 .scroll-sidecar__actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .scroll-sidecar__actions button { display: grid; min-width: 0; height: 34px; padding: 7px; place-items: center; border: 0; border-radius: 6px; background: #fff; color: #42464a; box-shadow: 0 3px 12px rgba(0,0,0,.2); cursor: pointer; }
