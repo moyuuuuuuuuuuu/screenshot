@@ -8,6 +8,7 @@ pub mod pin_window;
 mod platform;
 pub mod region_observer;
 pub mod scroll_controller;
+pub mod scroll_motion_tracker;
 pub mod settings;
 pub mod static_region_detector;
 pub mod stitcher;
@@ -15,3 +16,5 @@ pub mod tray;
 
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod scroll_motion_tracker_tests;

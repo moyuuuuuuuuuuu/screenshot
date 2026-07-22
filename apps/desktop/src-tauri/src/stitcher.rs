@@ -109,6 +109,22 @@ pub fn find_vertical_overlap(
     minimum_texture: f32,
     minimum_confidence: f32,
 ) -> Result<OverlapMatch, MatchError> {
+    find_vertical_overlap_in_range(
+        previous,
+        next,
+        minimum_overlap..=maximum_overlap,
+        minimum_texture,
+        minimum_confidence,
+    )
+}
+
+pub fn find_vertical_overlap_in_range(
+    previous: &GrayFrame,
+    next: &GrayFrame,
+    overlap_range: std::ops::RangeInclusive<u32>,
+    minimum_texture: f32,
+    minimum_confidence: f32,
+) -> Result<OverlapMatch, MatchError> {
     if previous.width == 0
         || previous.height == 0
         || next.width == 0
@@ -122,8 +138,8 @@ pub fn find_vertical_overlap(
         return Err(MatchError::DifferentDimensions);
     }
 
-    let upper = maximum_overlap.min(previous.height.saturating_sub(1));
-    let lower = minimum_overlap.max(1).min(upper);
+    let upper = (*overlap_range.end()).min(previous.height.saturating_sub(1));
+    let lower = (*overlap_range.start()).max(1).min(upper);
     if lower > upper {
         return Err(MatchError::InvalidFrame);
     }
