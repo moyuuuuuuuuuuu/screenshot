@@ -10,7 +10,7 @@ describe('Tauri overlay configuration', () => {
       app: { withGlobalTauri: boolean; windows: Array<Record<string, unknown>> };
     };
 
-    expect(config.build.devUrl).toBe('http://127.0.0.1:1420');
+    expect(config.build.devUrl).toBe('http://127.0.0.1:43127');
     expect(config.app.withGlobalTauri).toBe(true);
     expect(config.app.windows[0]).toMatchObject({
       label: 'overlay',
