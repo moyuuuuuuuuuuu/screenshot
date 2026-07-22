@@ -12,10 +12,9 @@ use crate::platform::{self, RawMonitorFrame};
 use crate::preview_windows::{open_capture_border_windows, open_preview_window, ScreenRect};
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
-use crate::scroll_motion_tracker::{MotionEstimate, ScrollMotionTracker};
 use crate::static_region_detector::detect_static_regions;
 use crate::stitcher::{
-    downscale_grayscale, find_vertical_overlap_in_range, ChunkedStitcher, RgbaFrame,
+    downscale_grayscale, match_vertical_scroll, ChunkedStitcher, MatchDirection, RgbaFrame,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -349,6 +348,52 @@ fn publish_progress(
     );
 }
 
+fn append_matched_candidate(
+    stitcher: &mut ChunkedStitcher,
+    accepted_tail: &RgbaFrame,
+    candidate: RgbaFrame,
+    overlap_rows: u32,
+) -> Result<u32, String> {
+    let previous_gray = downscale_grayscale(accepted_tail, 4)
+        .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
+    let next_gray = downscale_grayscale(&candidate, 4)
+        .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
+    let static_regions = detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2)
+        .unwrap_or_default();
+    let before_height = stitcher.height();
+    stitcher
+        .append_with_static_regions(
+            candidate,
+            overlap_rows,
+            static_regions.top_rows * 4,
+            static_regions.bottom_rows * 4,
+            static_regions.confidence,
+            false,
+        )
+        .map_err(|error| format!("stitch failed: {error:?}"))?;
+    Ok(stitcher.height().saturating_sub(before_height))
+}
+
+#[cfg(test)]
+fn append_stable_candidate(
+    stitcher: &mut ChunkedStitcher,
+    accepted_tail: &RgbaFrame,
+    candidate: RgbaFrame,
+) -> Result<Option<u32>, String> {
+    match match_vertical_scroll(accepted_tail, &candidate)
+        .map_err(|error| format!("stable-frame match failed: {error:?}"))?
+    {
+        MatchDirection::Forward { overlap_rows } => append_matched_candidate(
+            stitcher,
+            accepted_tail,
+            candidate,
+            overlap_rows.min(accepted_tail.height.saturating_sub(1)),
+        )
+        .map(Some),
+        MatchDirection::Reverse | MatchDirection::Unmatched => Ok(None),
+    }
+}
+
 fn prepare_capture_windows(
     open_and_exclude_preview: impl FnOnce() -> Result<(), String>,
     open_and_exclude_borders: impl FnOnce() -> Result<(), String>,
@@ -439,12 +484,6 @@ fn run_capture(
     let first_gray = downscale_grayscale(&first, 8)
         .map_err(|error| format!("observation preparation failed: {error:?}"))?;
     observer.observe(&first_gray.pixels, Duration::ZERO);
-    let first_motion_gray = downscale_grayscale(&first, 4)
-        .map_err(|error| format!("motion preparation failed: {error:?}"))?;
-    let mut motion_tracker =
-        ScrollMotionTracker::new(first_motion_gray.width, first_motion_gray.height);
-    motion_tracker.observe(&first_motion_gray);
-    let mut pending_motion = MotionEstimate::Stationary;
     stitcher
         .append(first.clone(), 0)
         .map_err(|error| format!("stitch failed: {error:?}"))?;
@@ -475,12 +514,6 @@ fn run_capture(
         let candidate = crop_region(platform::capture_monitors()?, region)?;
         let candidate_gray = downscale_grayscale(&candidate, 8)
             .map_err(|error| format!("observation preparation failed: {error:?}"))?;
-        let candidate_motion_gray = downscale_grayscale(&candidate, 4)
-            .map_err(|error| format!("motion preparation failed: {error:?}"))?;
-        let estimate = motion_tracker.observe(&candidate_motion_gray);
-        if !matches!(estimate, MotionEstimate::Stationary) {
-            pending_motion = estimate;
-        }
         match observer.observe(&candidate_gray.pixels, started.elapsed()) {
             Observation::MotionStarted => {
                 session
@@ -491,46 +524,20 @@ fn run_capture(
                 session
                     .stable_frame_ready()
                     .map_err(|_| "invalid stable-frame transition")?;
-                let previous_gray = downscale_grayscale(&accepted_tail, 4)
-                    .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
-                let next_gray = candidate_motion_gray;
-                match pending_motion {
-                    MotionEstimate::Forward { .. } => {
-                        let range = motion_tracker
-                            .expected_overlap()
-                            .ok_or("missing motion overlap")?;
-                        let overlap_rows = find_vertical_overlap_in_range(
-                            &previous_gray,
-                            &next_gray,
-                            range,
-                            2.0,
-                            0.72,
-                        )
-                        .map_err(|error| format!("motion-constrained match failed: {error:?}"))?
-                        .overlap_rows;
-                        let overlap_rows =
-                            (overlap_rows * 4).min(candidate.height.saturating_sub(1));
-                        let static_regions =
-                            detect_static_regions(&[previous_gray, next_gray.clone()], 2, 0.9, 2)
-                                .unwrap_or_default();
-                        stitcher
-                            .append_with_static_regions(
-                                candidate.clone(),
-                                overlap_rows,
-                                static_regions.top_rows * 4,
-                                static_regions.bottom_rows * 4,
-                                static_regions.confidence,
-                                false,
-                            )
-                            .map_err(|error| format!("stitch failed: {error:?}"))?;
+                match match_vertical_scroll(&accepted_tail, &candidate)
+                    .map_err(|error| format!("stable-frame match failed: {error:?}"))?
+                {
+                    MatchDirection::Forward { overlap_rows } => {
+                        let added_height = append_matched_candidate(
+                            &mut stitcher,
+                            &accepted_tail,
+                            candidate.clone(),
+                            overlap_rows.min(candidate.height.saturating_sub(1)),
+                        )?;
                         session
-                            .forward_matched(candidate.height - overlap_rows)
+                            .forward_matched(added_height)
                             .map_err(|_| "invalid forward-match transition")?;
                         accepted_tail = candidate;
-                        motion_tracker =
-                            ScrollMotionTracker::new(next_gray.width, next_gray.height);
-                        motion_tracker.observe(&next_gray);
-                        pending_motion = MotionEstimate::Stationary;
                         preview_png = encode_png(
                             &stitcher
                                 .preview()
@@ -538,10 +545,10 @@ fn run_capture(
                         )?;
                         observer.mark_appended(started.elapsed());
                     }
-                    MotionEstimate::Reverse { .. } => session
+                    MatchDirection::Reverse => session
                         .reverse_detected()
                         .map_err(|_| "invalid reverse-match transition")?,
-                    MotionEstimate::Uncertain | MotionEstimate::Stationary => {
+                    MatchDirection::Unmatched => {
                         session
                             .unmatched()
                             .map_err(|_| "invalid unmatched transition")?
@@ -719,11 +726,53 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        crop_region, overlay_cleanup, prepare_capture_windows, run_cleanup_callbacks, termination,
-        CaptureCleanup, CaptureRegion, CaptureTermination, OverlayCleanup,
+        append_stable_candidate, crop_region, overlay_cleanup, prepare_capture_windows,
+        run_cleanup_callbacks, termination, CaptureCleanup, CaptureRegion, CaptureTermination,
+        OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
+    use crate::stitcher::{ChunkedStitcher, RgbaFrame};
     use std::{cell::RefCell, rc::Rc};
+
+    fn document_frame(start_row: u32, height: u32, width: u32) -> RgbaFrame {
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
+        for y in start_row..start_row + height {
+            for x in 0..width {
+                let mut value = u64::from(y)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .wrapping_add(u64::from(x).wrapping_mul(0xbf58_476d_1ce4_e5b9));
+                value ^= value >> 30;
+                value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                value ^= value >> 27;
+                let value = (value ^ (value >> 31)) as u8;
+                pixels.extend_from_slice(&[
+                    value,
+                    value.wrapping_add((x % 97) as u8),
+                    value.wrapping_add((y % 89) as u8),
+                    255,
+                ]);
+            }
+        }
+        RgbaFrame {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    #[test]
+    fn accepted_candidate_grows_preview_and_final_output() {
+        let first = document_frame(0, 700, 80);
+        let next = document_frame(260, 700, 80);
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(first.clone(), 0).unwrap();
+
+        let added = append_stable_candidate(&mut stitcher, &first, next).unwrap();
+
+        assert_eq!(added, Some(260));
+        assert_eq!(stitcher.preview().unwrap().height, 960);
+        assert_eq!(stitcher.finish().unwrap().height, 960);
+    }
 
     #[test]
     fn edit_save_cancel_and_finish_are_distinct_runtime_actions() {
