@@ -616,7 +616,7 @@ pub async fn start_long_capture(
                 OverlayCleanup::Hide => {
                     let _ = platform::restore_window_capture(&restore_window);
                     let _ = restore_window.set_ignore_cursor_events(false);
-                    let _ = restore_app.emit("capture-session-reset", ());
+                    crate::app_state::emit_capture_session_reset(&restore_app, &restore_window);
                     let _ = restore_app.emit("long-capture-presentation", false);
                     let _ = restore_window.hide();
                 }

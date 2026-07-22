@@ -45,16 +45,21 @@ describe('App', () => {
     const { container } = render(<App />);
     await act(async () => undefined);
 
-    act(() => tauriListeners.get('capture-ready')?.({ payload: [{ pngBase64: 'first' }] }));
+    act(() => tauriListeners.get('capture-started')?.({ payload: { sessionId: 1 } }));
+    act(() => tauriListeners.get('capture-ready')?.({
+      payload: { sessionId: 1, frames: [{ pngBase64: 'first' }] },
+    }));
     expect(container.querySelector('.screenshot-source')).toHaveAttribute(
       'src',
       'data:image/png;base64,first',
     );
 
-    act(() => tauriListeners.get('capture-started')?.({ payload: undefined }));
+    act(() => tauriListeners.get('capture-started')?.({ payload: { sessionId: 2 } }));
     expect(container.querySelector('.screenshot-source')).not.toBeInTheDocument();
 
-    act(() => tauriListeners.get('capture-ready')?.({ payload: [{ pngBase64: 'second' }] }));
+    act(() => tauriListeners.get('capture-ready')?.({
+      payload: { sessionId: 2, frames: [{ pngBase64: 'second' }] },
+    }));
     expect(container.querySelector('.screenshot-source')).toHaveAttribute(
       'src',
       'data:image/png;base64,second',
@@ -79,10 +84,46 @@ describe('App', () => {
     fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
     expect(screen.getByTestId('selection-box')).toBeInTheDocument();
 
-    act(() => tauriListeners.get('capture-session-reset')?.({ payload: undefined }));
+    act(() => tauriListeners.get('capture-session-reset')?.({ payload: { sessionId: 0 } }));
 
     expect(screen.queryByTestId('selection-box')).not.toBeInTheDocument();
     expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'selecting');
+  });
+
+  it('ignores capture events from an older native session', async () => {
+    const { container } = render(<App />);
+    await act(async () => undefined);
+
+    act(() => tauriListeners.get('capture-started')?.({ payload: { sessionId: 2 } }));
+    act(() => tauriListeners.get('capture-ready')?.({
+      payload: { sessionId: 2, frames: [{ pngBase64: 'new' }] },
+    }));
+    act(() => tauriListeners.get('capture-ready')?.({
+      payload: { sessionId: 1, frames: [{ pngBase64: 'old' }] },
+    }));
+
+    expect(container.querySelector('.screenshot-source')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,new',
+    );
+  });
+
+  it('only resets the selection for the current native session', async () => {
+    render(<App />);
+    await act(async () => undefined);
+    act(() => tauriListeners.get('capture-started')?.({ payload: { sessionId: 2 } }));
+
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    expect(screen.getByTestId('selection-box')).toBeInTheDocument();
+
+    act(() => tauriListeners.get('capture-session-reset')?.({ payload: { sessionId: 1 } }));
+    expect(screen.getByTestId('selection-box')).toBeInTheDocument();
+
+    act(() => tauriListeners.get('capture-session-reset')?.({ payload: { sessionId: 2 } }));
+    expect(screen.queryByTestId('selection-box')).not.toBeInTheDocument();
   });
 
   it('opens local settings when requested from the tray', async () => {
