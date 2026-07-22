@@ -13,7 +13,9 @@ use windows_sys::Win32::{
 
 use super::RawMonitorFrame;
 
+mod capture_exclusion;
 mod target;
+pub use capture_exclusion::exclude_window_from_capture;
 pub use target::{locate_capture_target, validate_capture_target};
 
 #[derive(Clone, Copy)]

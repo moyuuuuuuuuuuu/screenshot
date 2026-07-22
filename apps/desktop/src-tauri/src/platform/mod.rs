@@ -46,6 +46,16 @@ pub fn validate_capture_target(target: CaptureTargetId) -> Result<(), String> {
     windows::validate_capture_target(target)
 }
 
+#[cfg(windows)]
+pub fn exclude_window_from_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
+    windows::exclude_window_from_capture(window)
+}
+
+#[cfg(not(windows))]
+pub fn exclude_window_from_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    Err("window capture exclusion is currently supported only on Windows".to_string())
+}
+
 #[cfg(not(windows))]
 pub fn validate_capture_target(_target: CaptureTargetId) -> Result<(), String> {
     Err("capture target validation is currently supported only on Windows".to_string())
