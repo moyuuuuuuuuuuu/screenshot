@@ -108,6 +108,20 @@ describe('App', () => {
     );
   });
 
+  it('accepts capture-ready when a hidden window missed capture-started', async () => {
+    const { container } = render(<App />);
+    await act(async () => undefined);
+
+    act(() => tauriListeners.get('capture-ready')?.({
+      payload: { sessionId: 3, frames: [{ pngBase64: 'recovered' }] },
+    }));
+
+    expect(container.querySelector('.screenshot-source')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,recovered',
+    );
+  });
+
   it('only resets the selection for the current native session', async () => {
     render(<App />);
     await act(async () => undefined);

@@ -16,10 +16,7 @@ pub(crate) fn apply_capture_affinity(
     Ok(())
 }
 
-fn set_window_capture_affinity(
-    window: &tauri::WebviewWindow,
-    affinity: u32,
-) -> Result<(), String> {
+fn set_window_capture_affinity(window: &tauri::WebviewWindow, affinity: u32) -> Result<(), String> {
     let hwnd = window
         .hwnd()
         .map_err(|error| format!("failed to read screenshot window handle: {error}"))?;

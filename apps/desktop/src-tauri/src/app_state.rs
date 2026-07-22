@@ -62,10 +62,7 @@ pub fn request_capture(app: &tauri::AppHandle) {
 
         match (result, window) {
             (Ok(frames), Some(window)) => {
-                let _ = window.emit(
-                    "capture-ready",
-                    CaptureReadyPayload { session_id, frames },
-                );
+                let _ = window.emit("capture-ready", CaptureReadyPayload { session_id, frames });
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -89,11 +86,10 @@ impl AppState {
             .then(|| self.session_id.fetch_add(1, Ordering::AcqRel) + 1)
     }
 
-    pub fn begin_capture_if_long_capture_idle(
-        &self,
-        long_capture_active: bool,
-    ) -> Option<u64> {
-        (!long_capture_active).then(|| self.begin_capture()).flatten()
+    pub fn begin_capture_if_long_capture_idle(&self, long_capture_active: bool) -> Option<u64> {
+        (!long_capture_active)
+            .then(|| self.begin_capture())
+            .flatten()
     }
 
     pub fn current_session_id(&self) -> u64 {

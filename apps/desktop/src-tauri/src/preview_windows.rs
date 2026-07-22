@@ -165,7 +165,10 @@ pub(crate) fn open_capture_border_windows(
                 WebviewUrl::App("index.html?window=scroll-border".into()),
             )
             .title("")
-            .inner_size(layout.rect.width.max(1) as f64, layout.rect.height.max(1) as f64)
+            .inner_size(
+                layout.rect.width.max(1) as f64,
+                layout.rect.height.max(1) as f64,
+            )
             .position(layout.rect.x as f64, layout.rect.y as f64)
             .decorations(false)
             .transparent(true)
@@ -362,10 +365,8 @@ mod tests {
                 height: 600,
             }
         );
-        assert!(
-            borders
-                .iter()
-                .all(|border| !intersects(selection, border.rect))
-        );
+        assert!(borders
+            .iter()
+            .all(|border| !intersects(selection, border.rect)));
     }
 }

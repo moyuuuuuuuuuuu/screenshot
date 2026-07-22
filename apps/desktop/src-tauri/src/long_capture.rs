@@ -9,9 +9,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
-use crate::preview_windows::{
-    open_capture_border_windows, open_preview_window, ScreenRect,
-};
+use crate::preview_windows::{open_capture_border_windows, open_preview_window, ScreenRect};
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::scroll_motion_tracker::{MotionEstimate, ScrollMotionTracker};
@@ -762,10 +760,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            *events.borrow(),
-            vec!["preview", "borders", "hide-overlay"]
-        );
+        assert_eq!(*events.borrow(), vec!["preview", "borders", "hide-overlay"]);
     }
 
     #[test]

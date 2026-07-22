@@ -55,7 +55,8 @@ export function App() {
     };
 
     void listen<CaptureReadyPayload>('capture-ready', (event) => {
-      if (event.payload.sessionId !== latestSessionId.current) return;
+      if (event.payload.sessionId < latestSessionId.current) return;
+      latestSessionId.current = event.payload.sessionId;
       setCaptureError(null);
       setSourceUrl(captureFrameSource(event.payload.frames));
       setSession((current) => current + 1);
