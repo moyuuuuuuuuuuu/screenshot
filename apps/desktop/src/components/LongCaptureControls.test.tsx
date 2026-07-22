@@ -21,6 +21,11 @@ function bridge(): DesktopBridge {
     }),
     loadSettings: vi.fn().mockResolvedValue({ shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } }),
     updateSettings: vi.fn(),
+    pinPng: vi.fn(),
+    sharePng: vi.fn(),
+    getPinnedPng: vi.fn(),
+    startWindowDragging: vi.fn(),
+    closePinWindow: vi.fn(),
   };
 }
 

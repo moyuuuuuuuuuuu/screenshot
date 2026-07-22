@@ -40,6 +40,18 @@ export function createBrowserDesktopBridge(
     async updateSettings(settings) {
       return settings;
     },
+    async pinPng() {
+      throw new Error('Pin windows require the desktop application');
+    },
+    async sharePng(blob) {
+      await dependencies.writeClipboard(blob);
+      return 'copiedFallback';
+    },
+    async getPinnedPng() {
+      throw new Error('Pin windows require the desktop application');
+    },
+    async startWindowDragging() {},
+    async closePinWindow() {},
   };
 }
 

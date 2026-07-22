@@ -19,6 +19,11 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     getLongCaptureProgress: vi.fn(),
     loadSettings: vi.fn().mockResolvedValue({ shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } }),
     updateSettings: vi.fn(),
+    pinPng: vi.fn().mockResolvedValue('pin-1'),
+    sharePng: vi.fn().mockResolvedValue('copiedFallback'),
+    getPinnedPng: vi.fn(),
+    startWindowDragging: vi.fn(),
+    closePinWindow: vi.fn(),
     ...overrides,
   };
 }
@@ -182,6 +187,23 @@ describe('ScreenshotEditor', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('服务不可用');
     expect(screen.getByText('200 × 140')).toBeInTheDocument();
     expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'annotating');
+  });
+
+  it('pins the selection and shows the copied share fallback', async () => {
+    const bridge = createBridge();
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '钉住' }));
+    expect(bridge.pinPng).toHaveBeenCalledWith(expect.any(Blob), {
+      x: 20, y: 20, width: 200, height: 140,
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: '转发' }));
+    expect(await screen.findByText(/已复制图片/)).toBeInTheDocument();
   });
 
   it('starts long capture for the selection and loads the result back into the editor', async () => {

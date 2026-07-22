@@ -91,4 +91,19 @@ describe('createTauriDesktopBridge', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'update_shortcut', { shortcut: 'Ctrl+Alt+X' });
     expect(invoke).toHaveBeenNthCalledWith(3, 'update_coze_config', { config: settings.coze });
   });
+
+  it('pins PNG bytes and reports copied share fallback', async () => {
+    const invoke = vi.fn()
+      .mockResolvedValueOnce('pin-7')
+      .mockResolvedValueOnce('copiedFallback');
+    const bridge = createTauriDesktopBridge(invoke);
+    const png = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' });
+
+    await expect(bridge.pinPng(png, { x: 10, y: 20, width: 100, height: 80 })).resolves.toBe('pin-7');
+    await expect(bridge.sharePng(png)).resolves.toBe('copiedFallback');
+    expect(invoke).toHaveBeenNthCalledWith(1, 'pin_png', {
+      pngBytes: [1, 2, 3], bounds: { x: 10, y: 20, width: 100, height: 80 },
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'share_png', { pngBytes: [1, 2, 3] });
+  });
 });

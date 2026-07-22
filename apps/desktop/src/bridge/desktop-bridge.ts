@@ -22,6 +22,8 @@ export type AppSettings = Readonly<{
   }>;
 }>;
 
+export type ShareOutcome = 'nativeShared' | 'copiedFallback';
+
 export interface DesktopBridge {
   copyPng(blob: Blob): Promise<void>;
   savePng(blob: Blob, suggestedName: string): Promise<string | null>;
@@ -35,4 +37,9 @@ export interface DesktopBridge {
   getLongCaptureProgress(): Promise<LongCaptureProgress>;
   loadSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
+  pinPng(blob: Blob, bounds: Rect): Promise<string>;
+  sharePng(blob: Blob): Promise<ShareOutcome>;
+  getPinnedPng(label: string): Promise<Blob>;
+  startWindowDragging(): Promise<void>;
+  closePinWindow(label: string): Promise<void>;
 }

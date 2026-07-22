@@ -69,6 +69,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   const [selectedEmoji, setSelectedEmoji] = useState('😊');
   const [error, setError] = useState<string | null>(null);
   const [serviceResult, setServiceResult] = useState<{ title: string; text: string; translatable: boolean } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [drawingPreview, setDrawingPreview] = useState<DrawingSession | null>(null);
   const [penWidth, setPenWidth] = useState(4);
   const [mosaicWidth, setMosaicWidth] = useState(20);
@@ -350,6 +351,27 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     }
   }, [cozeService, exportSelection, selection]);
 
+  const pinSelection = useCallback(async () => {
+    if (!selection) return;
+    setError(null);
+    try {
+      await bridge.pinPng(await exportSelection(), selection);
+      await bridge.closeOverlay();
+    } catch (pinError) {
+      setError(errorMessage(pinError));
+    }
+  }, [bridge, exportSelection, selection]);
+
+  const shareSelection = useCallback(async () => {
+    setError(null);
+    try {
+      const outcome = await bridge.sharePng(await exportSelection());
+      setToast(outcome === 'copiedFallback' ? '已复制图片，可粘贴到要转发的应用' : '已打开系统分享');
+    } catch (shareError) {
+      setError(errorMessage(shareError));
+    }
+  }, [bridge, exportSelection]);
+
   const handleAction = useCallback(
     (action: WechatToolbarAction) => {
       if (['rectangle', 'ellipse', 'emoji', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
@@ -364,11 +386,10 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       if (action === 'cancel') void bridge.closeOverlay();
       if (action === 'ocr') void runOcr();
       if (action === 'privacy') void runPrivacyRedaction();
-      if (action === 'pin' || action === 'share') {
-        setError('云端功能将在后续阶段接入');
-      }
+      if (action === 'pin') void pinSelection();
+      if (action === 'share') void shareSelection();
     },
-    [bridge, copyAndClose, runOcr, runPrivacyRedaction, save, startLongCapture],
+    [bridge, copyAndClose, pinSelection, runOcr, runPrivacyRedaction, save, shareSelection, startLongCapture],
   );
 
   useEffect(() => {
@@ -521,6 +542,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
           {...(serviceResult.translatable ? { onTranslate: runTranslation } : {})}
         />
       ) : null}
+      {toast ? <div className="editor-toast" role="status">{toast}</div> : null}
     </main>
   );
 }

@@ -11,6 +11,7 @@ fn main() {
         .manage(screenshot_tool::app_state::AppState::default())
         .manage(screenshot_tool::long_capture::LongCaptureRuntime::default())
         .manage(screenshot_tool::settings::SettingsState::default())
+        .manage(screenshot_tool::pin_window::PinWindowState::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -60,7 +61,12 @@ fn main() {
             screenshot_tool::long_capture::long_capture_progress,
             screenshot_tool::settings::load_settings,
             screenshot_tool::settings::update_shortcut,
-            screenshot_tool::settings::update_coze_config
+            screenshot_tool::settings::update_coze_config,
+            screenshot_tool::pin_window::pin_png,
+            screenshot_tool::pin_window::get_pinned_png,
+            screenshot_tool::pin_window::close_pin_window,
+            screenshot_tool::pin_window::start_window_dragging,
+            screenshot_tool::pin_window::share_png
         ])
         .run(tauri::generate_context!())
         .expect("failed to run screenshot tool");

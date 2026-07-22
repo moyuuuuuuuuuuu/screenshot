@@ -7,6 +7,7 @@ import { createTauriDesktopBridge } from './bridge/tauri-desktop-bridge';
 import { ScreenshotEditor } from './components/ScreenshotEditor';
 import { LongCaptureControls } from './components/LongCaptureControls';
 import { SettingsPanel } from './components/SettingsPanel';
+import { PinWindow } from './components/PinWindow';
 import './styles.css';
 
 type MonitorFrame = Readonly<{
@@ -25,7 +26,10 @@ export function createAppDesktopBridge(): DesktopBridge {
 const desktopBridge = createAppDesktopBridge();
 
 export function App() {
-  const controlWindow = new URLSearchParams(window.location.search).get('window') === 'long-capture-controls';
+  const windowParameters = new URLSearchParams(window.location.search);
+  const windowKind = windowParameters.get('window');
+  const controlWindow = windowKind === 'long-capture-controls';
+  const pinLabel = windowKind === 'pin' ? windowParameters.get('label') : null;
   const [sourceUrl, setSourceUrl] = useState('');
   const [session, setSession] = useState(0);
   const [captureError, setCaptureError] = useState<string | null>(null);
@@ -69,6 +73,7 @@ export function App() {
   }, []);
 
   if (controlWindow) return <LongCaptureControls bridge={desktopBridge} />;
+  if (pinLabel) return <PinWindow label={pinLabel} bridge={desktopBridge} />;
 
   return (
     <>

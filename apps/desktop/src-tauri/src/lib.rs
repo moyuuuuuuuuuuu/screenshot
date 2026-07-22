@@ -4,6 +4,7 @@ pub mod frame_stability;
 pub mod hotkey;
 pub mod long_capture;
 pub mod output;
+pub mod pin_window;
 mod platform;
 pub mod region_observer;
 pub mod scroll_controller;

@@ -112,5 +112,26 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
       await invoke('update_shortcut', { shortcut: settings.shortcut });
       return parseSettings(await invoke('update_coze_config', { config: settings.coze }));
     },
+    async pinPng(blob, bounds) {
+      const result = await invoke('pin_png', { pngBytes: await blobBytes(blob), bounds });
+      if (typeof result !== 'string') throw new Error('pin_png returned an invalid label');
+      return result;
+    },
+    async sharePng(blob) {
+      const result = await invoke('share_png', { pngBytes: await blobBytes(blob) });
+      if (result === 'nativeShared' || result === 'copiedFallback') return result;
+      throw new Error('share_png returned an invalid outcome');
+    },
+    async getPinnedPng(label) {
+      const result = await invoke('get_pinned_png', { label });
+      if (!Array.isArray(result)) throw new Error('get_pinned_png returned invalid bytes');
+      return new Blob([new Uint8Array(result as number[])], { type: 'image/png' });
+    },
+    async startWindowDragging() {
+      await invoke('start_window_dragging');
+    },
+    async closePinWindow(label) {
+      await invoke('close_pin_window', { label });
+    },
   };
 }
