@@ -34,6 +34,13 @@ pub enum MatchDirection {
     Unmatched,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DirectionalMatch {
+    overlap_rows: u32,
+    mean_error: f32,
+    confidence: f32,
+}
+
 pub fn downscale_grayscale(frame: &RgbaFrame, scale: u32) -> Result<GrayFrame, MatchError> {
     let expected = frame.width as usize * frame.height as usize * 4;
     if frame.width == 0 || frame.height == 0 || frame.pixels.len() != expected {
@@ -179,6 +186,99 @@ pub fn find_vertical_overlap_in_range(
         mean_error,
         confidence,
     })
+}
+
+fn refine_direction(
+    previous_coarse: &GrayFrame,
+    next_coarse: &GrayFrame,
+    previous_fine: &GrayFrame,
+    next_fine: &GrayFrame,
+) -> Option<DirectionalMatch> {
+    const MAX_MEAN_ERROR: f32 = 32.0;
+    const FINE_TOLERANCE_ROWS: u32 = 8;
+
+    let minimum_coarse = (previous_coarse.height / 10).max(2);
+    let coarse = find_vertical_overlap(
+        previous_coarse,
+        next_coarse,
+        minimum_coarse,
+        previous_coarse.height.saturating_sub(1),
+        1.0,
+        0.55,
+    )
+    .ok()?;
+    let fine_center = coarse.overlap_rows.saturating_mul(2);
+    let fine_upper = previous_fine.height.saturating_sub(1);
+    let fine_start = fine_center
+        .saturating_sub(FINE_TOLERANCE_ROWS)
+        .max(1)
+        .min(fine_upper);
+    let fine_end = fine_center
+        .saturating_add(FINE_TOLERANCE_ROWS)
+        .min(fine_upper);
+    let fine = find_vertical_overlap_in_range(
+        previous_fine,
+        next_fine,
+        fine_start..=fine_end,
+        1.5,
+        0.65,
+    )
+    .ok()
+    .filter(|matched| matched.mean_error <= MAX_MEAN_ERROR)?;
+
+    Some(DirectionalMatch {
+        overlap_rows: fine.overlap_rows.saturating_mul(4),
+        mean_error: fine.mean_error,
+        confidence: fine.confidence,
+    })
+}
+
+fn select_direction(
+    forward: Option<DirectionalMatch>,
+    reverse: Option<DirectionalMatch>,
+) -> MatchDirection {
+    match (forward, reverse) {
+        (Some(forward), Some(reverse))
+            if reverse.confidence > forward.confidence + 0.08
+                || (reverse.confidence >= forward.confidence
+                    && reverse.mean_error + 2.0 < forward.mean_error) =>
+        {
+            MatchDirection::Reverse
+        }
+        (Some(forward), _) => MatchDirection::Forward {
+            overlap_rows: forward.overlap_rows,
+        },
+        (None, Some(_)) => MatchDirection::Reverse,
+        (None, None) => MatchDirection::Unmatched,
+    }
+}
+
+pub fn match_vertical_scroll(
+    previous: &RgbaFrame,
+    next: &RgbaFrame,
+) -> Result<MatchDirection, MatchError> {
+    if previous.width != next.width || previous.height != next.height {
+        return Err(MatchError::DifferentDimensions);
+    }
+    let previous_coarse = downscale_grayscale(previous, 8)?;
+    let next_coarse = downscale_grayscale(next, 8)?;
+    let previous_fine = downscale_grayscale(previous, 4)?;
+    let next_fine = downscale_grayscale(next, 4)?;
+
+    Ok(select_direction(
+        refine_direction(
+            &previous_coarse,
+            &next_coarse,
+            &previous_fine,
+            &next_fine,
+        ),
+        refine_direction(
+            &next_coarse,
+            &previous_coarse,
+            &next_fine,
+            &previous_fine,
+        ),
+    ))
 }
 
 pub fn classify_scroll_direction(
@@ -352,8 +452,8 @@ impl ChunkedStitcher {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_scroll_direction, downscale_grayscale, find_vertical_overlap, ChunkedStitcher,
-        MatchDirection, MatchError, RgbaFrame,
+        classify_scroll_direction, downscale_grayscale, find_vertical_overlap,
+        match_vertical_scroll, ChunkedStitcher, MatchDirection, MatchError, RgbaFrame,
     };
 
     fn document_frame(start_row: u32, height: u32, width: u32) -> RgbaFrame {
@@ -362,6 +462,32 @@ mod tests {
             for x in 0..width {
                 let value = ((y * 37 + x * 71 + y * x * 3) % 251) as u8;
                 pixels.extend_from_slice(&[value, value.wrapping_add(31), value / 2, 255]);
+            }
+        }
+        RgbaFrame {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    fn unique_document_frame(start_row: u32, height: u32, width: u32) -> RgbaFrame {
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
+        for y in start_row..start_row + height {
+            for x in 0..width {
+                let mut value = u64::from(y)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .wrapping_add(u64::from(x).wrapping_mul(0xbf58_476d_1ce4_e5b9));
+                value ^= value >> 30;
+                value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                value ^= value >> 27;
+                let value = (value ^ (value >> 31)) as u8;
+                pixels.extend_from_slice(&[
+                    value,
+                    value.wrapping_add((x % 97) as u8),
+                    value.wrapping_add((y % 89) as u8),
+                    255,
+                ]);
             }
         }
         RgbaFrame {
@@ -394,6 +520,28 @@ mod tests {
         assert_eq!(
             match_frames(&document_frame(0, 40, 8), &document_frame(28, 40, 8)),
             Ok(12)
+        );
+    }
+
+    #[test]
+    fn multiscale_match_accepts_a_real_wheel_sized_step() {
+        let previous = unique_document_frame(0, 700, 80);
+        let next = unique_document_frame(260, 700, 80);
+
+        assert_eq!(
+            match_vertical_scroll(&previous, &next),
+            Ok(MatchDirection::Forward { overlap_rows: 440 })
+        );
+    }
+
+    #[test]
+    fn multiscale_match_rejects_reverse_scroll() {
+        let previous = unique_document_frame(260, 700, 80);
+        let next = unique_document_frame(120, 700, 80);
+
+        assert_eq!(
+            match_vertical_scroll(&previous, &next),
+            Ok(MatchDirection::Reverse)
         );
     }
 
