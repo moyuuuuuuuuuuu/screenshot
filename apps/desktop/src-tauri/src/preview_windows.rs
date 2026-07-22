@@ -21,31 +21,46 @@ pub(crate) struct PreviewLayout {
     pub width: i32,
     pub height: i32,
     pub side: PreviewSide,
-    pub actions_right: i32,
-    pub actions_bottom: i32,
 }
 
-pub(crate) fn preview_window_layout(selection: ScreenRect, monitor: ScreenRect) -> PreviewLayout {
-    const EXTRA: i32 = 172;
+pub(crate) fn preview_window_layout(
+    selection: ScreenRect,
+    monitor: ScreenRect,
+) -> Result<PreviewLayout, String> {
+    const DESIRED_WIDTH: i32 = 172;
+    const MIN_WIDTH: i32 = 120;
     const MARGIN: i32 = 8;
-    let monitor_right = monitor.x + monitor.width;
-    let use_right = selection.x + selection.width + EXTRA + MARGIN <= monitor_right;
-    let side = if use_right {
+    let monitor_left = monitor.x + MARGIN;
+    let monitor_right = monitor.x + monitor.width - MARGIN;
+    let selection_left = selection.x;
+    let selection_right = selection.x + selection.width;
+    let left_space = (selection_left - monitor_left).max(0);
+    let right_space = (monitor_right - selection_right).max(0);
+
+    let side = if right_space >= DESIRED_WIDTH {
+        PreviewSide::Right
+    } else if left_space >= DESIRED_WIDTH {
+        PreviewSide::Left
+    } else if right_space >= left_space {
         PreviewSide::Right
     } else {
         PreviewSide::Left
     };
-    let desired_x = if use_right {
-        selection.x
-    } else {
-        selection.x - EXTRA
+    let available = match side {
+        PreviewSide::Left => left_space,
+        PreviewSide::Right => right_space,
     };
-    let width = (selection.width + EXTRA)
-        .min(monitor.width - MARGIN * 2)
-        .max(240);
+    if available < MIN_WIDTH {
+        return Err("not enough space outside the selection for long-capture controls".to_string());
+    }
+    let width = available.min(DESIRED_WIDTH);
+    let x = match side {
+        PreviewSide::Left => selection_left - width,
+        PreviewSide::Right => selection_right,
+    };
     let height = selection.height.min(monitor.height - MARGIN * 2).max(160);
-    PreviewLayout {
-        x: desired_x.clamp(monitor.x + MARGIN, monitor_right - width - MARGIN),
+    Ok(PreviewLayout {
+        x,
         y: selection.y.clamp(
             monitor.y + MARGIN,
             monitor.y + monitor.height - height - MARGIN,
@@ -53,9 +68,7 @@ pub(crate) fn preview_window_layout(selection: ScreenRect, monitor: ScreenRect) 
         width,
         height,
         side,
-        actions_right: 8,
-        actions_bottom: 8,
-    }
+    })
 }
 
 pub(crate) fn open_preview_window(
@@ -66,7 +79,7 @@ pub(crate) fn open_preview_window(
     if let Some(existing) = tauri::Manager::get_webview_window(app, "scroll-capture-preview") {
         let _ = existing.close();
     }
-    let layout = preview_window_layout(selection, monitor);
+    let layout = preview_window_layout(selection, monitor)?;
     let side = match layout.side {
         PreviewSide::Left => "left",
         PreviewSide::Right => "right",
@@ -91,38 +104,98 @@ pub(crate) fn open_preview_window(
 
 #[cfg(test)]
 mod tests {
-    use super::{preview_window_layout, PreviewSide, ScreenRect};
+    use super::{preview_window_layout, PreviewLayout, PreviewSide, ScreenRect};
+
+    fn intersects(a: ScreenRect, b: ScreenRect) -> bool {
+        a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+    }
+
+    fn layout_rect(layout: PreviewLayout) -> ScreenRect {
+        ScreenRect {
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
+        }
+    }
 
     #[test]
-    fn places_preview_and_navigator_on_the_right_when_space_is_available() {
+    fn places_a_172_pixel_sidecar_to_the_right_without_overlapping() {
+        let selection = ScreenRect {
+            x: 100,
+            y: 80,
+            width: 500,
+            height: 600,
+        };
         let layout = preview_window_layout(
-            ScreenRect {
-                x: 100,
-                y: 80,
-                width: 500,
-                height: 600,
-            },
+            selection,
             ScreenRect {
                 x: 0,
                 y: 0,
                 width: 1920,
                 height: 1080,
             },
-        );
+        )
+        .unwrap();
         assert_eq!(layout.side, PreviewSide::Right);
-        assert_eq!(layout.x, 100);
-        assert!(layout.width > 500);
-        assert_eq!(layout.actions_right, 8);
-        assert_eq!(layout.actions_bottom, 8);
+        assert_eq!(layout.x, 600);
+        assert_eq!(layout.width, 172);
+        assert!(!intersects(selection, layout_rect(layout)));
     }
 
     #[test]
-    fn falls_back_left_and_clamps_top_near_monitor_edges() {
+    fn falls_back_to_the_left_without_overlapping() {
+        let selection = ScreenRect {
+            x: 1650,
+            y: 80,
+            width: 250,
+            height: 500,
+        };
         let layout = preview_window_layout(
+            selection,
             ScreenRect {
-                x: 1650,
-                y: -20,
-                width: 250,
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        )
+        .unwrap();
+        assert_eq!(layout.side, PreviewSide::Left);
+        assert_eq!(layout.x + layout.width, selection.x);
+        assert!(!intersects(selection, layout_rect(layout)));
+    }
+
+    #[test]
+    fn narrows_to_available_space_down_to_120_pixels() {
+        let selection = ScreenRect {
+            x: 140,
+            y: 80,
+            width: 1740,
+            height: 500,
+        };
+        let layout = preview_window_layout(
+            selection,
+            ScreenRect {
+                x: 0,
+                y: 0,
+                width: 2048,
+                height: 1080,
+            },
+        )
+        .unwrap();
+        assert_eq!(layout.side, PreviewSide::Right);
+        assert_eq!(layout.width, 160);
+        assert!(!intersects(selection, layout_rect(layout)));
+    }
+
+    #[test]
+    fn rejects_layout_when_both_sides_are_narrower_than_120_pixels() {
+        let error = preview_window_layout(
+            ScreenRect {
+                x: 100,
+                y: 80,
+                width: 1720,
                 height: 500,
             },
             ScreenRect {
@@ -131,9 +204,11 @@ mod tests {
                 width: 1920,
                 height: 1080,
             },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "not enough space outside the selection for long-capture controls"
         );
-        assert_eq!(layout.side, PreviewSide::Left);
-        assert_eq!(layout.y, 8);
-        assert!(layout.x >= 0);
     }
 }
