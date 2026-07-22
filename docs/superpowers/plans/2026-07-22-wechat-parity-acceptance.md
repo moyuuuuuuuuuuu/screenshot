@@ -7,7 +7,8 @@
 | Ordinary toolbar | 28 px buttons, 20 px Lucide icons, 1.8 stroke, 2 px gap, 8 px radius | Pass (automated, 2026-07-22) |
 | Selection | `#07c160` border/accent, 6 px handles | Pass (automated) |
 | Scroll initial | No empty image placeholders and no frame/pixel counter | Pass (automated) |
-| Scroll grown | 148 px rail, 12 px gap, 36 px actions, 6 px action gap, 8 px edge anchor | Pass (automated) |
+| Scroll grown | 172 px desired / 120 px minimum outside sidecar, 6 px gap, 34 px actions, 4 px action gap, 6 px edge anchor | Pass (automated, 2026-07-22) |
+| Screenshot mask | One outside-only black layer at alpha `0.3`; selected pixels unmasked | Pass (automated, 2026-07-22) |
 
 The golden file stores measurements only. Local WeChat reference pixels are excluded from source control.
 
@@ -30,6 +31,27 @@ Automated verification completed on 2026-07-22:
 - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check`: passed.
 - `cargo clippy -j 1 --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings`: passed.
 - `cargo test -j 1 --manifest-path apps/desktop/src-tauri/Cargo.toml`: 58 tests passed.
+- `pnpm --filter @screenshot/desktop tauri:build --debug --no-bundle`: built `apps/desktop/src-tauri/target/debug/screenshot-tool.exe`.
+
+## 2026-07-22 sidecar and session-reset verification
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Sidecar never intersects selection | Pass automated / Pending Windows physical-pixel check | Four Rust layout tests cover right, left, 120–172 px constrained space, and insufficient-space rejection |
+| Manual wheel reaches target application | Pending Windows runtime check | Overlay is native mouse-transparent and the interactive sidecar is outside the selected rectangle; requires physical wheel confirmation |
+| Escape closes sidecar before overlay and discards output | Pass automated / Pending Windows flicker check | Rust cleanup-order test and React double-Escape test pass |
+| Next shortcut starts without the old selection | Pass automated / Pending Windows runtime check | Reducer, editor, and App reset-event tests clear the selection and rebuild a `selecting` session |
+| Ordinary mask is one `0.3` layer | Pass automated / Pending visual check | Selection component and golden visual metric tests pass; selected pixels use a transparent surface |
+| Stitching thresholds unchanged | Pass | Diff review contains no changes to motion detection, overlap matching, or stitcher thresholds |
+
+Fresh automated verification for this change:
+
+- `pnpm --filter @screenshot/desktop test -- --run`: 21 files, 92 tests passed.
+- `pnpm --filter @screenshot/desktop typecheck`: passed.
+- `pnpm --filter @screenshot/desktop build`: passed.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check`: passed.
+- `cargo clippy -j 1 --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings`: passed.
+- `cargo test -j 1 --manifest-path apps/desktop/src-tauri/Cargo.toml`: 60 tests passed.
 - `pnpm --filter @screenshot/desktop tauri:build --debug --no-bundle`: built `apps/desktop/src-tauri/target/debug/screenshot-tool.exe`.
 
 ## Windows runtime matrix
