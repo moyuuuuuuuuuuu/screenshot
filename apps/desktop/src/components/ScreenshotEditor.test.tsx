@@ -155,7 +155,7 @@ describe('ScreenshotEditor', () => {
     fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
     fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
 
-    await userEvent.click(screen.getByRole('button', { name: '长截图' }));
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
 
     expect(bridge.startLongCapture).toHaveBeenCalledWith(
       { x: 20, y: 30, width: 200, height: 150 },
@@ -185,7 +185,7 @@ describe('ScreenshotEditor', () => {
     fireEvent.pointerDown(selectionSurface, { clientX: 10, clientY: 10, pointerId: 1 });
     fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
     fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
-    await userEvent.click(screen.getByRole('button', { name: '长截图' }));
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
 
     reportProgress?.({
       frameCount: 3,
@@ -213,7 +213,7 @@ describe('ScreenshotEditor', () => {
     fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
     fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
 
-    await userEvent.click(screen.getByRole('button', { name: '长截图' }));
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '长截图失败：selection must fit within one monitor',

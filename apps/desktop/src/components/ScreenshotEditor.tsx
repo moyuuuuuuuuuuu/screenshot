@@ -19,7 +19,7 @@ import type { Point, Rect } from '../domain/geometry';
 import { renderAnnotations } from '../render/render-annotations';
 import { SelectionOverlay } from './SelectionOverlay';
 import { TextEditor } from './TextEditor';
-import { Toolbar, type ToolbarAction } from './Toolbar';
+import { WechatToolbar, type WechatToolbarAction } from './WechatToolbar';
 
 type ScreenshotEditorProps = Readonly<{
   sourceUrl: string;
@@ -275,19 +275,18 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   }, [bridge, longCaptureProgress, selection]);
 
   const handleAction = useCallback(
-    (action: ToolbarAction) => {
+    (action: WechatToolbarAction) => {
       if (['rectangle', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
         setActiveTool(action as Tool);
         setTextPosition(null);
         return;
       }
       if (action === 'undo') setHistory((current) => undo(current));
-      if (action === 'redo') setHistory((current) => redo(current));
-      if (action === 'copy' || action === 'complete') void copyAndClose();
+      if (action === 'complete') void copyAndClose();
       if (action === 'save') void save();
       if (action === 'long-capture') void startLongCapture();
       if (action === 'cancel') void bridge.closeOverlay();
-      if (action === 'ocr' || action === 'translate') {
+      if (action === 'ocr' || action === 'privacy' || action === 'pin' || action === 'share') {
         setError('云端功能将在后续阶段接入');
       }
     },
@@ -420,10 +419,9 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
           className="toolbar-positioner"
           style={{ left: toolbarLeft, top: toolbarTop }}
         >
-          <Toolbar
-            activeTool={activeTool}
+          <WechatToolbar
+            activeAction={activeTool}
             canUndo={history.past.length > 0}
-            canRedo={history.future.length > 0}
             drawingWidth={activeTool === 'mosaic' ? mosaicWidth : penWidth}
             onDrawingWidthChange={activeTool === 'mosaic' ? setMosaicWidth : setPenWidth}
             onAction={handleAction}
