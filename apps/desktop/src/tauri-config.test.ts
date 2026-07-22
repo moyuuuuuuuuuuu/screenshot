@@ -6,9 +6,11 @@ describe('Tauri overlay configuration', () => {
     const config = JSON.parse(
       readFileSync('src-tauri/tauri.conf.json', 'utf8'),
     ) as {
+      build: { devUrl: string };
       app: { withGlobalTauri: boolean; windows: Array<Record<string, unknown>> };
     };
 
+    expect(config.build.devUrl).toBe('http://127.0.0.1:1420');
     expect(config.app.withGlobalTauri).toBe(true);
     expect(config.app.windows[0]).toMatchObject({
       label: 'overlay',
