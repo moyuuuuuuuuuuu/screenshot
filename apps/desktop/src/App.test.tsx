@@ -82,6 +82,27 @@ describe('App', () => {
     expect(screen.queryByLabelText('截图编辑器')).not.toBeInTheDocument();
   });
 
+  it('updates a reused mask edge from the native layout event', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?window=scroll-mask&edge=top&edgeStart=20&edgeLength=200',
+    );
+    const { container } = render(<App />);
+    await act(async () => undefined);
+    expect(container.querySelector('.scroll-capture-mask__edge'))
+      .toHaveStyle('--edge-start: 20px; --edge-length: 200px');
+
+    act(() => tauriListeners.get('scroll-mask-layout')?.({
+      payload: { edge: 'bottom', edgeStart: 80, edgeLength: 640 },
+    }));
+
+    expect(container.querySelector('.scroll-capture-mask__edge'))
+      .toHaveAttribute('data-edge', 'bottom');
+    expect(container.querySelector('.scroll-capture-mask__edge'))
+      .toHaveStyle('--edge-start: 80px; --edge-length: 640px');
+  });
+
   it('clears an old selection when the native long-capture session resets', async () => {
     render(<App />);
     await act(async () => undefined);

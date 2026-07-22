@@ -23,6 +23,12 @@ type CaptureReadyPayload = Readonly<{
   frames: readonly MonitorFrame[];
 }>;
 
+type ScrollMaskLayout = Readonly<{
+  edge: string;
+  edgeStart: number;
+  edgeLength: number;
+}>;
+
 export function captureFrameSource(frames: readonly MonitorFrame[]): string {
   const first = frames[0];
   return first ? `data:image/png;base64,${first.pngBase64}` : '';
@@ -44,6 +50,11 @@ export function App() {
   const [session, setSession] = useState(0);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [maskLayout, setMaskLayout] = useState<ScrollMaskLayout>(() => ({
+    edge: windowParameters.get('edge') ?? '',
+    edgeStart: Number(windowParameters.get('edgeStart')) || 0,
+    edgeLength: Number(windowParameters.get('edgeLength')) || 0,
+  }));
   const latestSessionId = useRef(0);
 
   useEffect(() => {
@@ -80,6 +91,11 @@ export function App() {
     void listen<boolean>('long-capture-presentation', (event) => {
       document.documentElement.classList.toggle('long-capture-presentation', event.payload);
     }).then(retainUnlisten).catch(() => undefined);
+    if (maskWindow) {
+      void listen<ScrollMaskLayout>('scroll-mask-layout', (event) => {
+        setMaskLayout(event.payload);
+      }).then(retainUnlisten).catch(() => undefined);
+    }
     void listen('settings-requested', () => {
       void desktopBridge.loadSettings().then(setSettings).catch((error: unknown) => {
         setCaptureError(error instanceof Error ? error.message : '无法读取设置');
@@ -94,17 +110,14 @@ export function App() {
   }, []);
 
   if (maskWindow) {
-    const edge = windowParameters.get('edge') ?? '';
-    const edgeStart = Number(windowParameters.get('edgeStart')) || 0;
-    const edgeLength = Number(windowParameters.get('edgeLength')) || 0;
     return (
       <div className="scroll-capture-mask" aria-hidden="true">
         <span
           className="scroll-capture-mask__edge"
-          data-edge={edge}
+          data-edge={maskLayout.edge}
           style={{
-            '--edge-start': `${edgeStart}px`,
-            '--edge-length': `${edgeLength}px`,
+            '--edge-start': `${maskLayout.edgeStart}px`,
+            '--edge-length': `${maskLayout.edgeLength}px`,
           } as CSSProperties}
         />
       </div>

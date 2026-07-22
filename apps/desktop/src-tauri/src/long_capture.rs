@@ -9,7 +9,9 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
-use crate::preview_windows::{open_capture_mask_windows, open_preview_window, ScreenRect};
+use crate::preview_windows::{
+    open_capture_mask_windows, open_preview_window, ScreenRect, MASK_WINDOW_LABELS,
+};
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::static_region_detector::detect_static_regions;
@@ -487,15 +489,16 @@ fn prepare_capture_windows<M, P>(
     Ok((masks, preview))
 }
 
-fn dismiss_temporary_windows(
-    labels: &[&str],
+fn cleanup_capture_windows(
+    reusable_labels: &[&str],
+    ephemeral_labels: &[&str],
     mut hide: impl FnMut(&str),
     mut close: impl FnMut(&str),
 ) {
-    for label in labels {
+    for label in reusable_labels.iter().chain(ephemeral_labels) {
         hide(label);
     }
-    for label in labels {
+    for label in ephemeral_labels {
         close(label);
     }
 }
@@ -721,15 +724,9 @@ pub async fn start_long_capture(
                 }
             },
             move || {
-                let labels = [
-                    "scroll-capture-preview",
-                    "scroll-mask-top",
-                    "scroll-mask-right",
-                    "scroll-mask-bottom",
-                    "scroll-mask-left",
-                ];
-                dismiss_temporary_windows(
-                    &labels,
+                cleanup_capture_windows(
+                    &MASK_WINDOW_LABELS,
+                    &["scroll-capture-preview"],
                     |label| {
                         if let Some(window) = close_app.get_webview_window(label) {
                             let _ = window.hide();
@@ -771,11 +768,12 @@ pub async fn start_long_capture(
                         for mask in &masks {
                             let _ = mask.hide();
                         }
-                        for mask in masks {
-                            let _ = mask.close();
-                        }
                         return Err(error);
                     }
+                }
+                for mask in &masks {
+                    mask.show()
+                        .map_err(|error| format!("failed to show capture mask: {error}"))?;
                 }
                 Ok(masks)
             },
@@ -837,7 +835,7 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        append_stable_candidate, crop_region, dismiss_temporary_windows, finalize_capture_result,
+        append_stable_candidate, cleanup_capture_windows, crop_region, finalize_capture_result,
         match_motion_candidate, observation_requires_match, overlay_cleanup,
         prepare_capture_windows, run_cleanup_callbacks, should_refresh_preview, termination,
         CaptureCleanup, CaptureRegion, CaptureTermination, LongCaptureAction, OverlayCleanup,
@@ -1119,10 +1117,11 @@ mod tests {
     }
 
     #[test]
-    fn temporary_windows_are_all_hidden_before_any_are_closed() {
+    fn cleanup_hides_all_masks_without_closing_them() {
         let events = RefCell::new(Vec::new());
-        dismiss_temporary_windows(
-            &["preview", "top", "right", "bottom", "left"],
+        cleanup_capture_windows(
+            &["scroll-mask-top", "scroll-mask-right"],
+            &["scroll-capture-preview"],
             |label| events.borrow_mut().push(format!("hide:{label}")),
             |label| events.borrow_mut().push(format!("close:{label}")),
         );
@@ -1130,16 +1129,10 @@ mod tests {
         assert_eq!(
             events.into_inner(),
             vec![
-                "hide:preview",
-                "hide:top",
-                "hide:right",
-                "hide:bottom",
-                "hide:left",
-                "close:preview",
-                "close:top",
-                "close:right",
-                "close:bottom",
-                "close:left",
+                "hide:scroll-mask-top",
+                "hide:scroll-mask-right",
+                "hide:scroll-capture-preview",
+                "close:scroll-capture-preview",
             ]
         );
     }

@@ -1,4 +1,12 @@
-use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+use serde::Serialize;
+use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+
+pub(crate) const MASK_WINDOW_LABELS: [&str; 4] = [
+    "scroll-mask-top",
+    "scroll-mask-right",
+    "scroll-mask-bottom",
+    "scroll-mask-left",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScreenRect {
@@ -64,6 +72,50 @@ pub(crate) struct MaskLayout {
     pub edge: MaskEdge,
     pub edge_start: i32,
     pub edge_length: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MaskWindowOperation {
+    Hide,
+    Reuse,
+    Create,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MaskWindowPlan {
+    label: &'static str,
+    layout: Option<MaskLayout>,
+    operation: MaskWindowOperation,
+}
+
+fn mask_window_lifecycle_plan(
+    layouts: &[MaskLayout],
+    existing_labels: &[&str],
+) -> Vec<MaskWindowPlan> {
+    MASK_WINDOW_LABELS
+        .into_iter()
+        .map(|label| {
+            let layout = layouts.iter().find(|layout| layout.label == label).copied();
+            let operation = match (layout, existing_labels.contains(&label)) {
+                (None, _) => MaskWindowOperation::Hide,
+                (Some(_), true) => MaskWindowOperation::Reuse,
+                (Some(_), false) => MaskWindowOperation::Create,
+            };
+            MaskWindowPlan {
+                label,
+                layout,
+                operation,
+            }
+        })
+        .collect()
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaskWindowUpdate {
+    edge: &'static str,
+    edge_start: i32,
+    edge_length: i32,
 }
 
 pub(crate) fn mask_window_layouts(selection: ScreenRect, monitor: ScreenRect) -> Vec<MaskLayout> {
@@ -216,64 +268,31 @@ pub(crate) fn open_capture_mask_windows(
     selection: ScreenRect,
     monitor: ScreenRect,
 ) -> Result<Vec<tauri::WebviewWindow>, String> {
+    let layouts = mask_window_layouts(selection, monitor);
+    let existing_labels = MASK_WINDOW_LABELS
+        .iter()
+        .copied()
+        .filter(|label| app.get_webview_window(label).is_some())
+        .collect::<Vec<_>>();
+    let plans = mask_window_lifecycle_plan(&layouts, &existing_labels);
     let mut windows = Vec::with_capacity(4);
-    for layout in mask_window_layouts(selection, monitor) {
-        if let Some(existing) = tauri::Manager::get_webview_window(app, layout.label) {
-            let _ = existing.hide();
-            let _ = existing.close();
+
+    for plan in plans {
+        if plan.operation == MaskWindowOperation::Hide {
+            if let Some(window) = app.get_webview_window(plan.label) {
+                let _ = window.hide();
+            }
+            continue;
         }
-        let result = (|| {
-            let window = WebviewWindowBuilder::new(
-                app,
-                layout.label,
-                WebviewUrl::App(
-                    format!(
-                        "index.html?window=scroll-mask&edge={}&edgeStart={}&edgeLength={}",
-                        layout.edge.as_str(),
-                        layout.edge_start,
-                        layout.edge_length,
-                    )
-                    .into(),
-                ),
-            )
-            .title("")
-            .inner_size(layout.rect.width as f64, layout.rect.height as f64)
-            .position(layout.rect.x as f64, layout.rect.y as f64)
-            .decorations(false)
-            .transparent(false)
-            .background_color(tauri::window::Color(0, 0, 0, 255))
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .resizable(false)
-            .shadow(false)
-            .focused(false)
-            .focusable(false)
-            .build()
-            .map_err(|error| format!("failed to open {}: {error}", layout.label))?;
-            window
-                .set_position(PhysicalPosition::new(layout.rect.x, layout.rect.y))
-                .map_err(|error| format!("failed to position {}: {error}", layout.label))?;
-            window
-                .set_size(PhysicalSize::new(
-                    layout.rect.width as u32,
-                    layout.rect.height as u32,
-                ))
-                .map_err(|error| format!("failed to size {}: {error}", layout.label))?;
-            window
-                .set_ignore_cursor_events(false)
-                .map_err(|error| format!("failed to block input for {}: {error}", layout.label))?;
-            crate::platform::set_window_opacity(&window, 77)
-                .map_err(|error| format!("failed to set {} opacity: {error}", layout.label))?;
-            Ok(window)
-        })();
+        let layout = plan
+            .layout
+            .ok_or_else(|| format!("missing layout for {}", plan.label))?;
+        let result = prepare_mask_window(app, layout, plan.operation);
         match result {
             Ok(window) => windows.push(window),
             Err(error) => {
                 for window in &windows {
                     let _ = window.hide();
-                }
-                for window in windows {
-                    let _ = window.close();
                 }
                 return Err(error);
             }
@@ -282,15 +301,131 @@ pub(crate) fn open_capture_mask_windows(
     Ok(windows)
 }
 
+fn prepare_mask_window(
+    app: &tauri::AppHandle,
+    layout: MaskLayout,
+    operation: MaskWindowOperation,
+) -> Result<tauri::WebviewWindow, String> {
+    let window = match operation {
+        MaskWindowOperation::Reuse => app
+            .get_webview_window(layout.label)
+            .ok_or_else(|| format!("missing reusable mask {}", layout.label))?,
+        MaskWindowOperation::Create => WebviewWindowBuilder::new(
+            app,
+            layout.label,
+            WebviewUrl::App(
+                format!(
+                    "index.html?window=scroll-mask&edge={}&edgeStart={}&edgeLength={}",
+                    layout.edge.as_str(),
+                    layout.edge_start,
+                    layout.edge_length,
+                )
+                .into(),
+            ),
+        )
+        .title("")
+        .inner_size(layout.rect.width as f64, layout.rect.height as f64)
+        .position(layout.rect.x as f64, layout.rect.y as f64)
+        .visible(false)
+        .decorations(false)
+        .transparent(false)
+        .background_color(tauri::window::Color(0, 0, 0, 255))
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .shadow(false)
+        .focused(false)
+        .focusable(false)
+        .build()
+        .map_err(|error| format!("failed to open {}: {error}", layout.label))?,
+        MaskWindowOperation::Hide => {
+            return Err(format!("cannot prepare hidden mask {}", layout.label));
+        }
+    };
+
+    let _ = window.hide();
+    if let Err(error) = configure_mask_window(&window, layout) {
+        let _ = window.hide();
+        return Err(error);
+    }
+    if operation == MaskWindowOperation::Reuse {
+        app.emit_to(
+            layout.label,
+            "scroll-mask-layout",
+            MaskWindowUpdate {
+                edge: layout.edge.as_str(),
+                edge_start: layout.edge_start,
+                edge_length: layout.edge_length,
+            },
+        )
+        .map_err(|error| format!("failed to update {} layout: {error}", layout.label))?;
+    }
+    Ok(window)
+}
+
+fn configure_mask_window(window: &tauri::WebviewWindow, layout: MaskLayout) -> Result<(), String> {
+    window
+        .set_position(PhysicalPosition::new(layout.rect.x, layout.rect.y))
+        .map_err(|error| format!("failed to position {}: {error}", layout.label))?;
+    window
+        .set_size(PhysicalSize::new(
+            layout.rect.width as u32,
+            layout.rect.height as u32,
+        ))
+        .map_err(|error| format!("failed to size {}: {error}", layout.label))?;
+    window
+        .set_ignore_cursor_events(false)
+        .map_err(|error| format!("failed to block input for {}: {error}", layout.label))?;
+    crate::platform::set_window_opacity(window, 77)
+        .map_err(|error| format!("failed to set {} opacity: {error}", layout.label))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        mask_window_layouts, preview_window_layout, preview_window_policy, PreviewLayout,
-        PreviewSide, ScreenRect,
+        mask_window_layouts, mask_window_lifecycle_plan, preview_window_layout,
+        preview_window_policy, MaskWindowOperation, PreviewLayout, PreviewSide, ScreenRect,
     };
 
     fn intersects(a: ScreenRect, b: ScreenRect) -> bool {
         a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+    }
+
+    #[test]
+    fn existing_mask_labels_are_reused_and_missing_edges_stay_hidden() {
+        let layouts = mask_window_layouts(
+            ScreenRect {
+                x: 0,
+                y: 0,
+                width: 1000,
+                height: 700,
+            },
+            ScreenRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        );
+        let plan = mask_window_lifecycle_plan(
+            &layouts,
+            &[
+                "scroll-mask-top",
+                "scroll-mask-right",
+                "scroll-mask-bottom",
+                "scroll-mask-left",
+            ],
+        );
+
+        assert!(plan.iter().any(|item| {
+            item.label == "scroll-mask-right" && item.operation == MaskWindowOperation::Reuse
+        }));
+        assert!(plan.iter().any(|item| {
+            item.label == "scroll-mask-top" && item.operation == MaskWindowOperation::Hide
+        }));
+        assert!(plan.iter().any(|item| {
+            item.label == "scroll-mask-left" && item.operation == MaskWindowOperation::Hide
+        }));
     }
 
     fn layout_rect(layout: PreviewLayout) -> ScreenRect {
