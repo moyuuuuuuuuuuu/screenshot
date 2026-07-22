@@ -10,9 +10,12 @@ pub enum LongCaptureState {
     Idle,
     Preparing,
     Capturing,
+    Observing,
     Scrolling,
     Stabilizing,
     Matching,
+    PausedReverse,
+    Warning,
     Completed,
     Partial,
     Failed,
@@ -76,7 +79,7 @@ impl LongCaptureSession {
         self.frame_count = self.frame_count.saturating_add(1);
         if self.frame_count == 1 {
             self.stitched_height = frame_height;
-            self.state = LongCaptureState::Scrolling;
+            self.state = LongCaptureState::Observing;
         } else {
             self.state = LongCaptureState::Matching;
         }
@@ -84,7 +87,7 @@ impl LongCaptureSession {
     }
 
     pub fn scroll_sent(&mut self) -> Result<(), SessionError> {
-        if self.state != LongCaptureState::Scrolling {
+        if self.state != LongCaptureState::Observing {
             return Err(SessionError::InvalidTransition);
         }
         self.state = LongCaptureState::Stabilizing;
@@ -107,9 +110,109 @@ impl LongCaptureSession {
         } else if self.stitched_height >= MAX_HEIGHT || self.frame_count >= MAX_FRAMES {
             self.finish_for_limit();
         } else {
-            self.state = LongCaptureState::Scrolling;
+            self.state = LongCaptureState::Observing;
         }
         Ok(())
+    }
+
+    pub fn accept_first_frame(
+        &mut self,
+        frame_height: u32,
+        elapsed: Duration,
+    ) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::Preparing {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.check_limits(elapsed)?;
+        self.frame_count = 1;
+        self.stitched_height = frame_height;
+        self.state = LongCaptureState::Observing;
+        Ok(())
+    }
+
+    pub fn motion_started(&mut self) -> Result<(), SessionError> {
+        if !matches!(
+            self.state,
+            LongCaptureState::Observing
+                | LongCaptureState::PausedReverse
+                | LongCaptureState::Warning
+        ) {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::Scrolling;
+        Ok(())
+    }
+
+    pub fn stable_frame_ready(&mut self) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::Scrolling {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::Matching;
+        Ok(())
+    }
+
+    pub fn forward_matched(&mut self, added_height: u32) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::Matching {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.frame_count = self.frame_count.saturating_add(1);
+        self.stitched_height = self.stitched_height.saturating_add(added_height);
+        if self.frame_count >= MAX_FRAMES || self.stitched_height >= MAX_HEIGHT {
+            self.finish_for_limit();
+        } else {
+            self.state = LongCaptureState::Observing;
+        }
+        Ok(())
+    }
+
+    pub fn reverse_detected(&mut self) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::Matching {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::PausedReverse;
+        Ok(())
+    }
+
+    pub fn tail_recovered(&mut self) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::PausedReverse {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::Observing;
+        Ok(())
+    }
+
+    pub fn unmatched(&mut self) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::Matching {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::Warning;
+        Ok(())
+    }
+
+    pub fn complete(&mut self) -> Result<(), SessionError> {
+        if self.frame_count == 0
+            || matches!(
+                self.state,
+                LongCaptureState::Idle
+                    | LongCaptureState::Completed
+                    | LongCaptureState::Partial
+                    | LongCaptureState::Failed
+                    | LongCaptureState::Cancelled
+            )
+        {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::Completed;
+        Ok(())
+    }
+
+    pub fn check_limits(&mut self, elapsed: Duration) -> Result<(), SessionError> {
+        if self.limit_reached(elapsed) {
+            self.finish_for_limit();
+            Err(SessionError::ResourceLimit)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn request_stop(&mut self) {
@@ -151,32 +254,63 @@ mod tests {
     fn session_with_first_frame(height: u32) -> LongCaptureSession {
         let mut session = LongCaptureSession::default();
         session.start().unwrap();
-        session.begin_capture(Duration::ZERO).unwrap();
-        session.frame_captured(height).unwrap();
+        session.accept_first_frame(height, Duration::ZERO).unwrap();
         session
     }
 
     #[test]
-    fn first_frame_is_required_before_scrolling() {
+    fn first_frame_is_required_before_observing_motion() {
         let mut session = LongCaptureSession::default();
         session.start().unwrap();
-        assert_eq!(session.scroll_sent(), Err(SessionError::InvalidTransition));
+        assert_eq!(
+            session.motion_started(),
+            Err(SessionError::InvalidTransition)
+        );
 
-        session.begin_capture(Duration::ZERO).unwrap();
-        session.frame_captured(800).unwrap();
+        session.accept_first_frame(800, Duration::ZERO).unwrap();
+        assert_eq!(session.state(), LongCaptureState::Observing);
+    }
+
+    #[test]
+    fn forward_match_returns_to_observing() {
+        let mut session = session_with_first_frame(800);
+        session.motion_started().unwrap();
+        assert_eq!(session.state(), LongCaptureState::Scrolling);
+        session.stable_frame_ready().unwrap();
+        assert_eq!(session.state(), LongCaptureState::Matching);
+        session.forward_matched(320).unwrap();
+        assert_eq!(session.state(), LongCaptureState::Observing);
+        assert_eq!(session.stitched_height(), 1_120);
+    }
+
+    #[test]
+    fn reverse_scroll_pauses_until_the_tail_matches_again() {
+        let mut session = session_with_first_frame(800);
+        session.motion_started().unwrap();
+        session.stable_frame_ready().unwrap();
+        session.reverse_detected().unwrap();
+        assert_eq!(session.state(), LongCaptureState::PausedReverse);
+        session.tail_recovered().unwrap();
+        assert_eq!(session.state(), LongCaptureState::Observing);
+    }
+
+    #[test]
+    fn unmatched_frame_warns_without_counting_a_frame() {
+        let mut session = session_with_first_frame(800);
+        session.motion_started().unwrap();
+        session.stable_frame_ready().unwrap();
+        session.unmatched().unwrap();
+        assert_eq!(session.state(), LongCaptureState::Warning);
+        assert_eq!(session.frame_count(), 1);
+        session.motion_started().unwrap();
         assert_eq!(session.state(), LongCaptureState::Scrolling);
     }
 
     #[test]
-    fn two_no_content_matches_complete_the_session() {
+    fn explicit_completion_keeps_the_accepted_image() {
         let mut session = session_with_first_frame(800);
-        for expected_state in [LongCaptureState::Scrolling, LongCaptureState::Completed] {
-            session.scroll_sent().unwrap();
-            session.begin_capture(Duration::ZERO).unwrap();
-            session.frame_captured(800).unwrap();
-            session.match_completed(0).unwrap();
-            assert_eq!(session.state(), expected_state);
-        }
+        session.complete().unwrap();
+        assert_eq!(session.state(), LongCaptureState::Completed);
     }
 
     #[test]
@@ -207,9 +341,8 @@ mod tests {
     #[test]
     fn elapsed_time_limit_returns_a_partial_result() {
         let mut session = session_with_first_frame(900);
-        session.scroll_sent().unwrap();
         assert_eq!(
-            session.begin_capture(MAX_DURATION),
+            session.check_limits(MAX_DURATION),
             Err(SessionError::ResourceLimit)
         );
         assert_eq!(session.state(), LongCaptureState::Partial);
@@ -219,10 +352,9 @@ mod tests {
     fn frame_limit_stops_the_session() {
         let mut session = session_with_first_frame(1);
         for _ in 1..MAX_FRAMES {
-            session.scroll_sent().unwrap();
-            session.begin_capture(Duration::ZERO).unwrap();
-            session.frame_captured(1).unwrap();
-            session.match_completed(1).unwrap();
+            session.motion_started().unwrap();
+            session.stable_frame_ready().unwrap();
+            session.forward_matched(1).unwrap();
         }
         assert_eq!(session.state(), LongCaptureState::Partial);
         assert_eq!(session.frame_count(), MAX_FRAMES);
@@ -231,10 +363,9 @@ mod tests {
     #[test]
     fn height_limit_stops_with_the_completed_pixels() {
         let mut session = session_with_first_frame(59_500);
-        session.scroll_sent().unwrap();
-        session.begin_capture(Duration::ZERO).unwrap();
-        session.frame_captured(800).unwrap();
-        session.match_completed(500).unwrap();
+        session.motion_started().unwrap();
+        session.stable_frame_ready().unwrap();
+        session.forward_matched(500).unwrap();
 
         assert_eq!(session.state(), LongCaptureState::Partial);
         assert_eq!(session.stitched_height(), 60_000);

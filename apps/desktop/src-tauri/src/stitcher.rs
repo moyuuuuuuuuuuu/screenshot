@@ -28,21 +28,10 @@ pub enum MatchError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailedMatchAction {
-    RetrySmallerStep { scroll_delta: i32 },
-    PreservePartialResult,
-}
-
-pub fn failed_match_action(already_retried: bool, current_scroll_delta: i32) -> FailedMatchAction {
-    if already_retried {
-        FailedMatchAction::PreservePartialResult
-    } else {
-        let direction = current_scroll_delta.signum();
-        let magnitude = (current_scroll_delta.unsigned_abs() / 2).max(1) as i32;
-        FailedMatchAction::RetrySmallerStep {
-            scroll_delta: direction * magnitude,
-        }
-    }
+pub enum MatchDirection {
+    Forward { overlap_rows: u32 },
+    Reverse,
+    Unmatched,
 }
 
 pub fn downscale_grayscale(frame: &RgbaFrame, scale: u32) -> Result<GrayFrame, MatchError> {
@@ -176,6 +165,46 @@ pub fn find_vertical_overlap(
     })
 }
 
+pub fn classify_scroll_direction(
+    accepted_tail: &GrayFrame,
+    candidate: &GrayFrame,
+    minimum_overlap: u32,
+) -> MatchDirection {
+    const MAX_DIRECTION_MEAN_ERROR: f32 = 32.0;
+    let maximum_overlap = accepted_tail.height.saturating_sub(1);
+    let forward = find_vertical_overlap(
+        accepted_tail,
+        candidate,
+        minimum_overlap,
+        maximum_overlap,
+        2.0,
+        0.75,
+    )
+    .ok()
+    .filter(|matched| matched.mean_error <= MAX_DIRECTION_MEAN_ERROR);
+    let reverse = find_vertical_overlap(
+        candidate,
+        accepted_tail,
+        minimum_overlap,
+        maximum_overlap,
+        2.0,
+        0.75,
+    )
+    .ok()
+    .filter(|matched| matched.mean_error <= MAX_DIRECTION_MEAN_ERROR);
+
+    match (forward, reverse) {
+        (Some(forward), Some(reverse)) if reverse.confidence > forward.confidence + 0.08 => {
+            MatchDirection::Reverse
+        }
+        (Some(forward), _) => MatchDirection::Forward {
+            overlap_rows: forward.overlap_rows,
+        },
+        (None, Some(_)) => MatchDirection::Reverse,
+        (None, None) => MatchDirection::Unmatched,
+    }
+}
+
 #[derive(Default)]
 pub struct ChunkedStitcher {
     width: Option<u32>,
@@ -286,8 +315,8 @@ impl ChunkedStitcher {
 #[cfg(test)]
 mod tests {
     use super::{
-        downscale_grayscale, failed_match_action, find_vertical_overlap, ChunkedStitcher,
-        FailedMatchAction, MatchError, RgbaFrame,
+        classify_scroll_direction, downscale_grayscale, find_vertical_overlap, ChunkedStitcher,
+        MatchDirection, MatchError, RgbaFrame,
     };
 
     fn document_frame(start_row: u32, height: u32, width: u32) -> RgbaFrame {
@@ -342,14 +371,39 @@ mod tests {
     }
 
     #[test]
-    fn retries_once_with_a_smaller_scroll_step_then_preserves_partial() {
+    fn classifies_forward_and_reverse_scrolling() {
+        let first = downscale_grayscale(&document_frame(0, 40, 8), 1).unwrap();
+        let forward = downscale_grayscale(&document_frame(20, 40, 8), 1).unwrap();
+        let reverse = downscale_grayscale(&document_frame(10, 40, 8), 1).unwrap();
+
         assert_eq!(
-            failed_match_action(false, -600),
-            FailedMatchAction::RetrySmallerStep { scroll_delta: -300 }
+            classify_scroll_direction(&first, &forward, 4),
+            MatchDirection::Forward { overlap_rows: 20 }
         );
         assert_eq!(
-            failed_match_action(true, -300),
-            FailedMatchAction::PreservePartialResult
+            classify_scroll_direction(&forward, &reverse, 4),
+            MatchDirection::Reverse
+        );
+    }
+
+    #[test]
+    fn classifies_unrelated_frames_as_unmatched() {
+        let first = downscale_grayscale(&document_frame(0, 40, 8), 1).unwrap();
+        let mut seed = 0x9e37_79b9_u32;
+        let unrelated = super::GrayFrame {
+            width: 8,
+            height: 40,
+            pixels: (0..320)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (seed >> 24) as u8
+                })
+                .collect(),
+        };
+
+        assert_eq!(
+            classify_scroll_direction(&first, &unrelated, 4),
+            MatchDirection::Unmatched
         );
     }
 
