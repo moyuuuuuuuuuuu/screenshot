@@ -51,9 +51,19 @@ pub fn exclude_window_from_capture(window: &tauri::WebviewWindow) -> Result<(), 
     windows::exclude_window_from_capture(window)
 }
 
+#[cfg(windows)]
+pub fn restore_window_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
+    windows::restore_window_capture(window)
+}
+
 #[cfg(not(windows))]
 pub fn exclude_window_from_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
     Err("window capture exclusion is currently supported only on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn restore_window_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    Err("window capture affinity is currently supported only on Windows".to_string())
 }
 
 #[cfg(not(windows))]
