@@ -36,9 +36,19 @@ pub fn locate_capture_target(x: i32, y: i32) -> Result<CaptureTargetId, String> 
     windows::locate_capture_target(x, y)
 }
 
+#[cfg(windows)]
+pub fn focus_capture_target(target: CaptureTargetId) -> Result<(), String> {
+    windows::focus_capture_target(target)
+}
+
 #[cfg(not(windows))]
 pub fn locate_capture_target(_x: i32, _y: i32) -> Result<CaptureTargetId, String> {
     Err("capture target tracking is currently supported only on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn focus_capture_target(_target: CaptureTargetId) -> Result<(), String> {
+    Err("capture target focus is currently supported only on Windows".to_string())
 }
 
 #[cfg(windows)]

@@ -426,6 +426,7 @@ fn run_capture(
     let target_x = (region.x + region.width / 2.0).round() as i32;
     let target_y = (region.y + region.height / 2.0).round() as i32;
     let target = platform::locate_capture_target(target_x, target_y)?;
+    platform::focus_capture_target(target)?;
     let started = Instant::now();
     let mut session = LongCaptureSession::default();
     let mut observer = RegionObserver::new(0.01);
