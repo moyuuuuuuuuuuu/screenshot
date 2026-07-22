@@ -316,12 +316,12 @@ Shortcut available / shortcut already registered
 - [x] Remove repeated static regions when confidence is sufficient and preserve ambiguous content for manual cropping.
 - [x] Detect the bottom only after two consecutive no-new-content observations.
 - [x] Add the icon-only long-capture action, progress/stop UI, cleanup paths and final-image handoff to the editor.
-- [ ] Verify Edge/Chrome, File Explorer, Windows Settings and one Electron application.
+- [ ] Verify Edge/Chrome, File Explorer, Windows Settings and one Electron application (release gate; automated build coverage is complete, physical Windows input matrix remains to be recorded).
 - [x] Commit with `git commit -m "feat: integrate automatic scrolling screenshots"`.
 
-Phase C acceptance:
+Phase C acceptance (implementation complete; Windows application/input matrix pending):
 
-- Selecting a scrollable region starts automatic capture and can be stopped at any time.
+- Selecting a scrollable region starts manual-scroll observation and can be stopped at any time.
 - Common browser and desktop content produces a usable long image without obvious duplicate seams.
 - Fixed elements are removed when reliable; ambiguous cases preserve content and allow cropping.
 - Failures preserve completed frames and always restore the overlay and input state.
