@@ -19,4 +19,13 @@ describe('Tauri overlay configuration', () => {
       skipTaskbar: true,
     });
   });
+
+  it('allows every screenshot window to receive native lifecycle events', () => {
+    const capability = JSON.parse(
+      readFileSync('src-tauri/capabilities/default.json', 'utf8'),
+    ) as { windows: string[]; permissions: string[] };
+
+    expect(capability.windows).toContain('*');
+    expect(capability.permissions).toContain('core:event:default');
+  });
 });

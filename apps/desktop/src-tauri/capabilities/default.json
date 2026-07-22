@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Allow screenshot windows to receive native lifecycle events.",
+  "windows": ["*"],
+  "permissions": ["core:event:default"]
+}
