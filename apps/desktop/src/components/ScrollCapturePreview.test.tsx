@@ -22,15 +22,20 @@ function bridge(): DesktopBridge {
 }
 
 describe('ScrollCapturePreview', () => {
-  it('shows a large cumulative preview, right navigator, and four lower-right icon actions', async () => {
+  it('shows a narrow sidecar without an interactive stage over the selection', async () => {
     const desktop = bridge();
     render(<ScrollCapturePreview bridge={desktop} side="right" />);
 
-    expect(await screen.findByRole('img', { name: '累计长截图预览' })).toHaveClass('scroll-preview__image');
-    expect(screen.getByRole('img', { name: '长截图导航' })).toHaveClass('scroll-preview__navigator');
-    expect(screen.getByRole('toolbar', { name: '长截图操作' })).toHaveClass('scroll-preview__actions');
+    expect(await screen.findByRole('img', { name: '累计长截图预览' }))
+      .toHaveClass('scroll-sidecar__preview');
+    expect(screen.getByRole('img', { name: '长截图导航' }))
+      .toHaveClass('scroll-sidecar__navigator');
+    expect(screen.getByRole('toolbar', { name: '长截图操作' }))
+      .toHaveClass('scroll-sidecar__actions');
+    expect(document.querySelector('.scroll-preview__stage')).not.toBeInTheDocument();
+    expect(document.querySelector('.scroll-sidecar')).toHaveAttribute('data-side', 'right');
     expect(screen.queryByText(/2400|7 帧/)).not.toBeInTheDocument();
-    for (const icon of document.querySelectorAll('.scroll-preview__actions svg')) {
+    for (const icon of document.querySelectorAll('.scroll-sidecar__actions svg')) {
       expect(icon).toHaveAttribute('width', '20');
       expect(icon).toHaveAttribute('height', '20');
       expect(icon).toHaveAttribute('stroke-width', '1.8');

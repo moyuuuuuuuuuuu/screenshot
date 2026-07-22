@@ -31,16 +31,16 @@ export function ScrollCapturePreview({ bridge, side }: Props) {
     { label: '完成长截图', Icon: Check, action: bridge.finishLongCapture },
   ] as const;
   return (
-    <main className="scroll-preview" data-side={side}>
-      <div className="scroll-preview__stage">
-        {preview ? <img className="scroll-preview__image" src={preview} alt="累计长截图预览" /> : null}
-        <span className="scroll-preview__prompt">滚动页面截取更多内容</span>
+    <main className="scroll-sidecar" data-side={side}>
+      <div className="scroll-sidecar__preview-wrap">
+        {preview ? <img className="scroll-sidecar__preview" src={preview} alt="累计长截图预览" /> : null}
+        <span className="scroll-sidecar__prompt">滚动页面截取更多内容</span>
       </div>
-      <div className="scroll-preview__rail">
-        {navigator ? <img className="scroll-preview__navigator" src={navigator} alt="长截图导航" /> : null}
+      <div className="scroll-sidecar__navigator-wrap">
+        {navigator ? <img className="scroll-sidecar__navigator" src={navigator} alt="长截图导航" /> : null}
       </div>
-      {progress?.slowScrollWarning ? <div className="scroll-preview__warning" role="status">请慢一点滚动</div> : null}
-      <div className="scroll-preview__actions" role="toolbar" aria-label="长截图操作">
+      {progress?.slowScrollWarning ? <div className="scroll-sidecar__warning" role="status">请慢一点滚动</div> : null}
+      <div className="scroll-sidecar__actions" role="toolbar" aria-label="长截图操作">
         {actions.map(({ label, Icon, action }) => (
           <button key={label} type="button" aria-label={label}
             onClick={() => void action()}>

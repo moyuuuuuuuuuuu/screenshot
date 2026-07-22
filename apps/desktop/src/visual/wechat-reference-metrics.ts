@@ -10,10 +10,11 @@ export const WECHAT_REFERENCE_METRICS = Object.freeze({
     stroke: 1.8,
   }),
   scrollPreview: Object.freeze({
-    rail: 148,
-    gap: 12,
-    action: 36,
-    actionGap: 6,
-    edgeAnchor: 8,
+    desiredWidth: 172,
+    minimumWidth: 120,
+    gap: 6,
+    action: 34,
+    actionGap: 4,
+    edgeAnchor: 6,
   }),
 });

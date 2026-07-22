@@ -66,13 +66,14 @@ describe('WeChat 4.1.11 visual parity contract', () => {
 
     expect(await screen.findByRole('img', { name: '累计长截图预览' })).toBeInTheDocument();
     expect(WECHAT_REFERENCE_METRICS.scrollPreview).toEqual({
-      rail: 148,
-      gap: 12,
-      action: 36,
-      actionGap: 6,
-      edgeAnchor: 8,
+      desiredWidth: 172,
+      minimumWidth: 120,
+      gap: 6,
+      action: 34,
+      actionGap: 4,
+      edgeAnchor: 6,
     });
-    expect(container.querySelector('.scroll-preview')).toHaveAttribute('data-side', 'left');
+    expect(container.querySelector('.scroll-sidecar')).toHaveAttribute('data-side', 'left');
     expect(screen.getAllByRole('button')).toHaveLength(4);
     expect(container).not.toHaveTextContent(/\d+\s*(帧|px|像素)/i);
   });

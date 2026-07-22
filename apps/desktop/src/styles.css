@@ -96,20 +96,16 @@ button { font: inherit; }
 .pin-window { position: relative; width: 100vw; height: 100vh; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.18); background: transparent; }
 .pin-window img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; cursor: move; }
 .pin-window button { position: absolute; top: 7px; right: 7px; display: none; width: 25px; height: 25px; padding: 0; border: 0; border-radius: 50%; background: rgba(25, 25, 25, 0.72); color: #fff; font-size: 18px; cursor: pointer; }
-.scroll-preview { position: relative; display: grid; width: 100vw; height: 100vh; grid-template-columns: minmax(0, 1fr) 148px; gap: 12px; padding: 2px 2px 54px; background: transparent; }
-.scroll-preview[data-side="left"] { grid-template-columns: 148px minmax(0, 1fr); }
-.scroll-preview[data-side="left"] .scroll-preview__stage { grid-column: 2; }
-.scroll-preview[data-side="left"] .scroll-preview__rail { grid-column: 1; grid-row: 1; }
-.scroll-preview__stage { position: relative; display: grid; min-width: 0; overflow: hidden; border: 1px solid #07c160; background: #fff; }
-.scroll-preview__image { width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
-.scroll-preview__prompt { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 5px 10px; border-radius: 4px; background: rgba(25, 25, 25, .72); color: #fff; font-size: 12px; white-space: nowrap; }
-.scroll-preview__rail { display: grid; min-height: 0; padding: 5px; place-items: end center; border-radius: 4px; background: rgba(25, 25, 25, .82); }
-.scroll-preview__navigator { width: 100%; max-height: 100%; object-fit: contain; object-position: center bottom; }
-.scroll-preview__actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; }
-.scroll-preview__actions button { display: grid; width: 36px; height: 36px; padding: 8px; place-items: center; border: 0; border-radius: 6px; background: #fff; color: #42464a; box-shadow: 0 3px 12px rgba(0,0,0,.2); cursor: pointer; }
-.scroll-preview__actions button:last-child { color: #07c160; }
-.scroll-preview__actions svg { width: 20px; height: 20px; }
-.scroll-preview__warning { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 10px; border-radius: 4px; background: rgba(25,25,25,.78); color: #fff; font-size: 12px; }
+.scroll-sidecar { position: relative; display: grid; width: 100vw; height: 100vh; grid-template-rows: minmax(0, 1fr) minmax(72px, 30%) auto; gap: 6px; padding: 6px; overflow: hidden; border: 1px solid rgba(7, 193, 96, .75); border-radius: 6px; background: rgba(25, 25, 25, .86); }
+.scroll-sidecar__preview-wrap, .scroll-sidecar__navigator-wrap { position: relative; min-height: 0; overflow: hidden; border-radius: 4px; background: #fff; }
+.scroll-sidecar__preview, .scroll-sidecar__navigator { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+.scroll-sidecar__prompt { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); padding: 4px 6px; border-radius: 4px; background: rgba(25,25,25,.72); color: #fff; font-size: 11px; white-space: nowrap; }
+.scroll-sidecar__actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.scroll-sidecar__actions button { display: grid; min-width: 0; height: 34px; padding: 7px; place-items: center; border: 0; border-radius: 6px; background: #fff; color: #42464a; box-shadow: 0 3px 12px rgba(0,0,0,.2); cursor: pointer; }
+.scroll-sidecar__actions button:last-child { color: #07c160; }
+.scroll-sidecar__actions svg { width: 20px; height: 20px; }
+.scroll-sidecar__warning { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 8px; border-radius: 4px; background: rgba(25,25,25,.78); color: #fff; font-size: 11px; white-space: nowrap; }
+@media (max-width: 149px) { .scroll-sidecar__actions { grid-template-columns: repeat(2, 36px); justify-content: center; } }
 .pin-window:hover button, .pin-window button:focus-visible { display: grid; place-items: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
