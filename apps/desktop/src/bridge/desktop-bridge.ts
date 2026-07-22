@@ -14,6 +14,14 @@ export type LongCaptureResult = Readonly<{
   partial: boolean;
 }>;
 
+export type AppSettings = Readonly<{
+  shortcut: string;
+  coze: Readonly<{
+    token: string;
+    workflowId: string;
+  }>;
+}>;
+
 export interface DesktopBridge {
   copyPng(blob: Blob): Promise<void>;
   savePng(blob: Blob, suggestedName: string): Promise<string | null>;
@@ -25,4 +33,6 @@ export interface DesktopBridge {
   stopLongCapture(): Promise<void>;
   cancelLongCapture(): Promise<void>;
   getLongCaptureProgress(): Promise<LongCaptureProgress>;
+  loadSettings(): Promise<AppSettings>;
+  updateSettings(settings: AppSettings): Promise<AppSettings>;
 }

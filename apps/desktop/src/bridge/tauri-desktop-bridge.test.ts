@@ -73,4 +73,22 @@ describe('createTauriDesktopBridge', () => {
     await expect(bridge.getLongCaptureProgress()).resolves.toEqual(progress);
     expect(invoke).toHaveBeenCalledWith('long_capture_progress');
   });
+
+  it('loads and updates shortcut and Coze settings through native commands', async () => {
+    const settings = {
+      shortcut: 'Ctrl+Alt+X',
+      coze: { token: 'secret', workflowId: 'workflow-1' },
+    };
+    const invoke = vi.fn()
+      .mockResolvedValueOnce(settings)
+      .mockResolvedValueOnce(settings)
+      .mockResolvedValueOnce(settings);
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.loadSettings()).resolves.toEqual(settings);
+    await expect(bridge.updateSettings(settings)).resolves.toEqual(settings);
+    expect(invoke).toHaveBeenNthCalledWith(1, 'load_settings');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'update_shortcut', { shortcut: 'Ctrl+Alt+X' });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'update_coze_config', { config: settings.coze });
+  });
 });

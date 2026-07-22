@@ -1,5 +1,6 @@
 import type { DesktopBridge } from './desktop-bridge';
 import type { LongCaptureProgress, LongCaptureResult } from './desktop-bridge';
+import type { AppSettings } from './desktop-bridge';
 
 export type TauriInvoke = (
   command: string,
@@ -22,6 +23,19 @@ function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
     || typeof progress.warning !== 'boolean'
   ) throw new Error('invalid long capture progress');
   return progress as LongCaptureProgress;
+}
+
+function parseSettings(value: unknown): AppSettings {
+  if (!value || typeof value !== 'object') throw new Error('invalid settings');
+  const settings = value as Record<string, unknown>;
+  const coze = settings.coze as Record<string, unknown> | undefined;
+  if (
+    typeof settings.shortcut !== 'string'
+    || !coze
+    || typeof coze.token !== 'string'
+    || typeof coze.workflowId !== 'string'
+  ) throw new Error('invalid settings');
+  return settings as AppSettings;
 }
 
 async function blobBytes(blob: Blob): Promise<number[]> {
@@ -90,6 +104,13 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     },
     async getLongCaptureProgress() {
       return parseLongCaptureProgress(await invoke('long_capture_progress'));
+    },
+    async loadSettings() {
+      return parseSettings(await invoke('load_settings'));
+    },
+    async updateSettings(settings) {
+      await invoke('update_shortcut', { shortcut: settings.shortcut });
+      return parseSettings(await invoke('update_coze_config', { config: settings.coze }));
     },
   };
 }

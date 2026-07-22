@@ -59,4 +59,20 @@ describe('App', () => {
       'data:image/png;base64,second',
     );
   });
+
+  it('opens local settings when requested from the tray', async () => {
+    tauriInvoke.mockResolvedValueOnce({
+      shortcut: 'Alt+Shift+A',
+      coze: { token: '', workflowId: '' },
+    });
+    render(<App />);
+    await act(async () => undefined);
+
+    await act(async () => {
+      tauriListeners.get('settings-requested')?.({ payload: undefined });
+    });
+
+    expect(await screen.findByRole('region', { name: '设置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '录制快捷键' })).toHaveTextContent('Alt+Shift+A');
+  });
 });

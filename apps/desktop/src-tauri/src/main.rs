@@ -1,5 +1,5 @@
 use tauri::Manager;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
+use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
 
 #[tauri::command]
 fn platform_name() -> &'static str {
@@ -10,6 +10,7 @@ fn main() {
     tauri::Builder::default()
         .manage(screenshot_tool::app_state::AppState::default())
         .manage(screenshot_tool::long_capture::LongCaptureRuntime::default())
+        .manage(screenshot_tool::settings::SettingsState::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -26,11 +27,21 @@ fn main() {
         )
         .setup(|app| {
             screenshot_tool::tray::create_tray(app)?;
-            if let Err(error) = app.global_shortcut().register("Alt+Shift+A") {
+            let settings = screenshot_tool::settings::read_settings(app.handle())
+                .unwrap_or_default();
+            let shortcut = settings.shortcut.clone();
+            let _ = app
+                .state::<screenshot_tool::settings::SettingsState>()
+                .replace(settings);
+            let mut registrar = screenshot_tool::hotkey::TauriShortcutRegistrar(app.handle());
+            if let Err(error) = screenshot_tool::hotkey::ShortcutRegistrar::register(
+                &mut registrar,
+                &shortcut,
+            ) {
                 rfd::MessageDialog::new()
                     .set_title("Screenshot shortcut unavailable")
                     .set_description(format!(
-                        "Alt+Shift+A could not be registered. You can still capture from the tray menu.\n\n{error}"
+                        "{shortcut} could not be registered. You can still capture from the tray menu.\n\n{error}"
                     ))
                     .set_level(rfd::MessageLevel::Error)
                     .show();
@@ -46,7 +57,10 @@ fn main() {
             screenshot_tool::long_capture::start_long_capture,
             screenshot_tool::long_capture::stop_long_capture,
             screenshot_tool::long_capture::cancel_long_capture,
-            screenshot_tool::long_capture::long_capture_progress
+            screenshot_tool::long_capture::long_capture_progress,
+            screenshot_tool::settings::load_settings,
+            screenshot_tool::settings::update_shortcut,
+            screenshot_tool::settings::update_coze_config
         ])
         .run(tauri::generate_context!())
         .expect("failed to run screenshot tool");

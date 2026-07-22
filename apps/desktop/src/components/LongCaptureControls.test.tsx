@@ -19,6 +19,8 @@ function bridge(): DesktopBridge {
       previewPngBytes: [137, 80, 78, 71],
       warning: false,
     }),
+    loadSettings: vi.fn().mockResolvedValue({ shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } }),
+    updateSettings: vi.fn(),
   };
 }
 

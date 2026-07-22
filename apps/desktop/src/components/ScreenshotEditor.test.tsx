@@ -16,6 +16,8 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     stopLongCapture: vi.fn().mockResolvedValue(undefined),
     cancelLongCapture: vi.fn().mockResolvedValue(undefined),
     getLongCaptureProgress: vi.fn(),
+    loadSettings: vi.fn().mockResolvedValue({ shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } }),
+    updateSettings: vi.fn(),
     ...overrides,
   };
 }

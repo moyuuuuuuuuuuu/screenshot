@@ -2,9 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 import type { DesktopBridge } from './bridge/desktop-bridge';
+import type { AppSettings } from './bridge/desktop-bridge';
 import { createTauriDesktopBridge } from './bridge/tauri-desktop-bridge';
 import { ScreenshotEditor } from './components/ScreenshotEditor';
 import { LongCaptureControls } from './components/LongCaptureControls';
+import { SettingsPanel } from './components/SettingsPanel';
 import './styles.css';
 
 type MonitorFrame = Readonly<{
@@ -27,6 +29,7 @@ export function App() {
   const [sourceUrl, setSourceUrl] = useState('');
   const [session, setSession] = useState(0);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
     const unlistenCallbacks: Array<() => void> = [];
@@ -52,6 +55,11 @@ export function App() {
     void listen<boolean>('long-capture-presentation', (event) => {
       document.documentElement.classList.toggle('long-capture-presentation', event.payload);
     }).then(retainUnlisten).catch(() => undefined);
+    void listen('settings-requested', () => {
+      void desktopBridge.loadSettings().then(setSettings).catch((error: unknown) => {
+        setCaptureError(error instanceof Error ? error.message : '无法读取设置');
+      });
+    }).then(retainUnlisten).catch(() => undefined);
 
     return () => {
       disposed = true;
@@ -69,6 +77,15 @@ export function App() {
         sourceUrl={sourceUrl}
         bridge={desktopBridge}
       />
+      {settings ? (
+        <SettingsPanel
+          initialSettings={settings}
+          onClose={() => setSettings(null)}
+          onSave={async (nextSettings) => {
+            setSettings(await desktopBridge.updateSettings(nextSettings));
+          }}
+        />
+      ) : null}
       {captureError ? <div className="capture-error" role="alert">{captureError}</div> : null}
     </>
   );

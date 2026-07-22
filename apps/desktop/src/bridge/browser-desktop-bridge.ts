@@ -34,6 +34,12 @@ export function createBrowserDesktopBridge(
         warning: true,
       };
     },
+    async loadSettings() {
+      return { shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } };
+    },
+    async updateSettings(settings) {
+      return settings;
+    },
   };
 }
 
