@@ -38,8 +38,8 @@ describe('WeChat 4.1.11 visual parity contract', () => {
       overlayMaskAlpha: 0.3,
       toolbar: { button: 28, icon: 20, gap: 2, radius: 8, stroke: 1.8 },
     });
-    expect(container.querySelectorAll('.wechat-toolbar__button')).toHaveLength(16);
-    expect(container.querySelectorAll('svg.lucide[stroke-width="1.8"]')).toHaveLength(16);
+    expect(container.querySelectorAll('.wechat-toolbar__button')).toHaveLength(15);
+    expect(container.querySelectorAll('svg.lucide[stroke-width="1.8"]')).toHaveLength(15);
   });
 
   it('keeps the initial scrolling state free of counters and empty image placeholders', async () => {
