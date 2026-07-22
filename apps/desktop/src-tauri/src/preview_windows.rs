@@ -27,12 +27,14 @@ pub(crate) struct PreviewLayout {
 struct PreviewWindowPolicy {
     focused: bool,
     focusable: bool,
+    transparent: bool,
 }
 
 fn preview_window_policy() -> PreviewWindowPolicy {
     PreviewWindowPolicy {
         focused: false,
         focusable: false,
+        transparent: false,
     }
 }
 
@@ -196,7 +198,8 @@ pub(crate) fn open_preview_window(
     .inner_size(layout.width as f64, layout.height as f64)
     .position(layout.x as f64, layout.y as f64)
     .decorations(false)
-    .transparent(true)
+    .transparent(policy.transparent)
+    .background_color(tauri::window::Color(25, 25, 25, 255))
     .always_on_top(true)
     .skip_taskbar(true)
     .resizable(false)
@@ -474,5 +477,6 @@ mod tests {
 
         assert!(!policy.focused);
         assert!(!policy.focusable);
+        assert!(!policy.transparent);
     }
 }

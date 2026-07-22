@@ -2,7 +2,7 @@ use std::time::Duration;
 
 pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(120);
 pub const STABLE_FOR: Duration = Duration::from_millis(200);
-pub const COMPLETE_AFTER: Duration = Duration::from_secs(2);
+pub const IDLE_WAIT_AFTER: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Observation {
@@ -10,7 +10,7 @@ pub enum Observation {
     MotionStarted,
     Stabilizing,
     StableFrame,
-    IdleComplete,
+    IdleWaiting,
 }
 
 pub struct RegionObserver {
@@ -61,8 +61,8 @@ impl RegionObserver {
 
         if let Some(appended_at) = self.last_append {
             let idle_since = appended_at.max(self.last_activity);
-            if now.saturating_sub(idle_since) >= COMPLETE_AFTER {
-                return Observation::IdleComplete;
+            if now.saturating_sub(idle_since) >= IDLE_WAIT_AFTER {
+                return Observation::IdleWaiting;
             }
         }
 
@@ -89,24 +89,24 @@ fn sample_difference(previous: &[u8], current: &[u8]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Observation, RegionObserver, COMPLETE_AFTER, STABLE_FOR};
+    use super::{Observation, RegionObserver, IDLE_WAIT_AFTER, STABLE_FOR};
     use std::time::Duration;
 
     #[test]
-    fn idle_completion_requires_an_appended_frame() {
+    fn accepted_manual_capture_waits_for_the_next_scroll_while_idle() {
         let mut observer = RegionObserver::new(0.01);
         assert_eq!(
             observer.observe(&[0; 16], Duration::ZERO),
             Observation::Unchanged
         );
         assert_ne!(
-            observer.observe(&[0; 16], COMPLETE_AFTER),
-            Observation::IdleComplete
+            observer.observe(&[0; 16], IDLE_WAIT_AFTER),
+            Observation::IdleWaiting
         );
         observer.mark_appended(Duration::ZERO);
         assert_eq!(
-            observer.observe(&[0; 16], COMPLETE_AFTER),
-            Observation::IdleComplete
+            observer.observe(&[0; 16], IDLE_WAIT_AFTER),
+            Observation::IdleWaiting
         );
     }
 
@@ -148,7 +148,7 @@ mod tests {
         );
         assert_ne!(
             observer.observe(&[64; 16], Duration::from_millis(2_050)),
-            Observation::IdleComplete
+            Observation::IdleWaiting
         );
     }
 

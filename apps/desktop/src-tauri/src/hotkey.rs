@@ -1,6 +1,23 @@
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlobalShortcutAction {
+    CancelLongCapture,
+    FinishLongCapture,
+    StartCapture,
+}
+
+pub fn route_global_shortcut(is_escape: bool, is_enter: bool) -> GlobalShortcutAction {
+    if is_escape {
+        GlobalShortcutAction::CancelLongCapture
+    } else if is_enter {
+        GlobalShortcutAction::FinishLongCapture
+    } else {
+        GlobalShortcutAction::StartCapture
+    }
+}
+
 pub trait ShortcutRegistrar {
     fn register(&mut self, shortcut: &str) -> Result<(), String>;
     fn unregister(&mut self, shortcut: &str) -> Result<(), String>;
@@ -79,5 +96,21 @@ mod tests {
 
         assert!(super::replace_shortcut(&mut registrar, "Alt+Shift+A", "Ctrl+Alt+X").is_err());
         assert!(registrar.registered.contains("Alt+Shift+A"));
+    }
+
+    #[test]
+    fn escape_cancels_and_enter_finishes_an_active_long_capture() {
+        assert_eq!(
+            super::route_global_shortcut(true, false),
+            super::GlobalShortcutAction::CancelLongCapture
+        );
+        assert_eq!(
+            super::route_global_shortcut(false, true),
+            super::GlobalShortcutAction::FinishLongCapture
+        );
+        assert_eq!(
+            super::route_global_shortcut(false, false),
+            super::GlobalShortcutAction::StartCapture
+        );
     }
 }

@@ -16,11 +16,19 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        if shortcut.matches(Modifiers::empty(), Code::Escape) {
-                            app.state::<screenshot_tool::long_capture::LongCaptureRuntime>()
-                                .request_cancel();
-                        } else {
-                            screenshot_tool::app_state::request_capture(app);
+                        match screenshot_tool::hotkey::route_global_shortcut(
+                            shortcut.matches(Modifiers::empty(), Code::Escape),
+                            shortcut.matches(Modifiers::empty(), Code::Enter),
+                        ) {
+                            screenshot_tool::hotkey::GlobalShortcutAction::CancelLongCapture => app
+                                .state::<screenshot_tool::long_capture::LongCaptureRuntime>()
+                                .request_cancel(),
+                            screenshot_tool::hotkey::GlobalShortcutAction::FinishLongCapture => app
+                                .state::<screenshot_tool::long_capture::LongCaptureRuntime>()
+                                .request_finish(),
+                            screenshot_tool::hotkey::GlobalShortcutAction::StartCapture => {
+                                screenshot_tool::app_state::request_capture(app);
+                            }
                         }
                     }
                 })

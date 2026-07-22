@@ -561,13 +561,7 @@ fn run_capture(
                         .map_err(|_| "invalid unmatched transition")?,
                 }
             }
-            Observation::IdleComplete => {
-                session
-                    .complete()
-                    .map_err(|_| "invalid completion transition")?;
-                break;
-            }
-            Observation::Unchanged | Observation::Stabilizing => {}
+            Observation::Unchanged | Observation::Stabilizing | Observation::IdleWaiting => {}
         }
         publish_progress(runtime, &session, &preview_png, accepted_tail.width);
         std::thread::sleep(SAMPLE_INTERVAL);
@@ -612,6 +606,7 @@ pub async fn start_long_capture(
         let close_app = app.clone();
         let unregister_app = app.clone();
         let escape_registered = app.global_shortcut().register("Escape").is_ok();
+        let enter_registered = app.global_shortcut().register("Enter").is_ok();
         let cleanup = CaptureCleanup::new(
             move || match overlay_cleanup(
                 restore_app
@@ -647,6 +642,9 @@ pub async fn start_long_capture(
                 }
                 if escape_registered {
                     let _ = unregister_app.global_shortcut().unregister("Escape");
+                }
+                if enter_registered {
+                    let _ = unregister_app.global_shortcut().unregister("Enter");
                 }
             },
         );
