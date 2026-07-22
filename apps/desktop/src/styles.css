@@ -7,7 +7,19 @@
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .long-capture-presentation, .long-capture-presentation body, .long-capture-presentation #root { background: transparent; }
-.long-capture-presentation .screenshot-editor { visibility: hidden; }
+.long-capture-presentation .screenshot-editor { background: transparent; }
+.long-capture-presentation .screenshot-source,
+.long-capture-presentation .annotation-canvas,
+.long-capture-presentation .toolbar-positioner,
+.long-capture-presentation .selection-size,
+.long-capture-presentation .selection-handle,
+.long-capture-presentation .editor-alert,
+.long-capture-presentation .service-busy,
+.long-capture-presentation .service-result,
+.long-capture-presentation .editor-toast,
+.long-capture-presentation .capture-error { visibility: hidden; }
+.long-capture-presentation .selection-surface { background: transparent; pointer-events: none; }
+.long-capture-presentation .selection-box { border-color: #07c160; box-shadow: none; }
 button { font: inherit; }
 
 .screenshot-editor {

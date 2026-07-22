@@ -152,11 +152,11 @@ where
     Close: FnOnce(),
 {
     fn drop(&mut self) {
-        if let Some(restore) = self.restore_overlay.take() {
-            restore();
-        }
         if let Some(close) = self.close_controls.take() {
             close();
+        }
+        if let Some(restore) = self.restore_overlay.take() {
+            restore();
         }
     }
 }
@@ -576,21 +576,22 @@ pub async fn start_long_capture(
         let unregister_app = app.clone();
         let escape_registered = app.global_shortcut().register("Escape").is_ok();
         let _cleanup = CaptureCleanup::new(
-            move || {
-                let _ = restore_window.set_ignore_cursor_events(false);
-                let _ = restore_app.emit("long-capture-presentation", false);
-                match overlay_cleanup(
-                    restore_app
-                        .state::<LongCaptureRuntime>()
-                        .is_cancel_requested(),
-                ) {
-                    OverlayCleanup::Restore => {
-                        let _ = restore_window.show();
-                        let _ = restore_window.set_focus();
-                    }
-                    OverlayCleanup::Hide => {
-                        let _ = restore_window.hide();
-                    }
+            move || match overlay_cleanup(
+                restore_app
+                    .state::<LongCaptureRuntime>()
+                    .is_cancel_requested(),
+            ) {
+                OverlayCleanup::Restore => {
+                    let _ = restore_app.emit("long-capture-presentation", false);
+                    let _ = restore_window.set_ignore_cursor_events(false);
+                    let _ = restore_window.show();
+                    let _ = restore_window.set_focus();
+                }
+                OverlayCleanup::Hide => {
+                    let _ = restore_window.hide();
+                    let _ = restore_app.emit("capture-session-reset", ());
+                    let _ = restore_app.emit("long-capture-presentation", false);
+                    let _ = restore_window.set_ignore_cursor_events(false);
                 }
             },
             move || {
@@ -669,7 +670,7 @@ mod tests {
         CaptureRegion, CaptureTermination, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
-    use std::{cell::Cell, rc::Rc};
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn edit_save_cancel_and_finish_are_distinct_runtime_actions() {
@@ -734,19 +735,17 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_restores_overlay_and_closes_controls_once() {
-        let restored = Rc::new(Cell::new(0));
-        let closed = Rc::new(Cell::new(0));
+    fn cleanup_closes_controls_before_touching_the_overlay() {
+        let events = Rc::new(RefCell::new(Vec::new()));
         {
-            let restored_count = Rc::clone(&restored);
-            let closed_count = Rc::clone(&closed);
+            let restore_events = Rc::clone(&events);
+            let close_events = Rc::clone(&events);
             let _cleanup = CaptureCleanup::new(
-                move || restored_count.set(restored_count.get() + 1),
-                move || closed_count.set(closed_count.get() + 1),
+                move || restore_events.borrow_mut().push("overlay"),
+                move || close_events.borrow_mut().push("controls"),
             );
         }
-        assert_eq!(restored.get(), 1);
-        assert_eq!(closed.get(), 1);
+        assert_eq!(*events.borrow(), vec!["controls", "overlay"]);
     }
 
     #[test]
