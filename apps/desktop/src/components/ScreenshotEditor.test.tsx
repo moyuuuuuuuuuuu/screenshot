@@ -237,6 +237,26 @@ describe('ScreenshotEditor', () => {
     expect(createObjectUrl).toHaveBeenCalledOnce();
   });
 
+  it('closes after a natively copied long capture without copying twice', async () => {
+    const bridge = createBridge({
+      startLongCapture: vi.fn().mockResolvedValue({
+        png: new Blob(['long'], { type: 'image/png' }),
+        partial: false,
+        action: 'finish',
+      }),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+    await waitFor(() => expect(bridge.closeOverlay).toHaveBeenCalledOnce());
+
+    expect(bridge.copyPng).not.toHaveBeenCalled();
+  });
+
   it('Esc cancels long capture and exits the overlay', async () => {
     let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
     let finishCapture: ((result: { png: Blob; partial: boolean; action: 'edit' }) => void) | undefined;

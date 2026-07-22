@@ -298,7 +298,6 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
         return;
       }
       if (result.action === 'finish') {
-        await bridge.copyPng(result.png);
         await bridge.closeOverlay();
         return;
       }

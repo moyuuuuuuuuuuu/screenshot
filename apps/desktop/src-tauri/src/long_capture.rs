@@ -125,6 +125,22 @@ fn termination(cancel: bool, stop: bool, accepted_frames: u32) -> CaptureTermina
     }
 }
 
+fn finalize_capture_result(
+    png_bytes: Vec<u8>,
+    partial: bool,
+    action: LongCaptureAction,
+    copy_png: impl FnOnce(&[u8]) -> Result<(), String>,
+) -> Result<LongCaptureResult, String> {
+    if action == LongCaptureAction::Finish {
+        copy_png(&png_bytes)?;
+    }
+    Ok(LongCaptureResult {
+        png_bytes,
+        partial,
+        action,
+    })
+}
+
 struct CaptureCleanup<Restore, Close>
 where
     Restore: FnOnce(),
@@ -653,15 +669,17 @@ fn run_capture(
     let output = stitcher
         .finish()
         .map_err(|error| format!("finish failed: {error:?}"))?;
-    Ok(LongCaptureResult {
-        png_bytes: encode_png(&output)?,
-        partial: outcome == CaptureTermination::Partial,
-        action: match runtime.requested_action() {
-            LongCaptureAction::Save => LongCaptureAction::Save,
-            LongCaptureAction::Finish => LongCaptureAction::Finish,
-            _ => LongCaptureAction::Edit,
-        },
-    })
+    let action = match runtime.requested_action() {
+        LongCaptureAction::Save => LongCaptureAction::Save,
+        LongCaptureAction::Finish => LongCaptureAction::Finish,
+        _ => LongCaptureAction::Edit,
+    };
+    finalize_capture_result(
+        encode_png(&output)?,
+        outcome == CaptureTermination::Partial,
+        action,
+        |png| crate::output::copy_png(png.to_vec()),
+    )
 }
 
 #[tauri::command]
@@ -819,10 +837,10 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        append_stable_candidate, crop_region, dismiss_temporary_windows, match_motion_candidate,
-        observation_requires_match, overlay_cleanup, prepare_capture_windows,
-        run_cleanup_callbacks, should_refresh_preview, termination, CaptureCleanup, CaptureRegion,
-        CaptureTermination, OverlayCleanup,
+        append_stable_candidate, crop_region, dismiss_temporary_windows, finalize_capture_result,
+        match_motion_candidate, observation_requires_match, overlay_cleanup,
+        prepare_capture_windows, run_cleanup_callbacks, should_refresh_preview, termination,
+        CaptureCleanup, CaptureRegion, CaptureTermination, LongCaptureAction, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
     use crate::region_observer::{Observation, RegionObserver};
@@ -956,6 +974,57 @@ mod tests {
         assert_eq!(runtime.requested_action(), super::LongCaptureAction::Cancel);
         runtime.request_finish();
         assert_eq!(runtime.requested_action(), super::LongCaptureAction::Finish);
+    }
+
+    #[test]
+    fn finish_copies_the_final_png_before_returning_success() {
+        let copied = Rc::new(RefCell::new(Vec::new()));
+        let copied_bytes = Rc::clone(&copied);
+        let result = finalize_capture_result(
+            vec![137, 80, 78, 71],
+            false,
+            LongCaptureAction::Finish,
+            move |png| {
+                *copied_bytes.borrow_mut() = png.to_vec();
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(*copied.borrow(), vec![137, 80, 78, 71]);
+        assert_eq!(result.action, LongCaptureAction::Finish);
+    }
+
+    #[test]
+    fn finish_copy_failure_prevents_success() {
+        let error = finalize_capture_result(
+            vec![137, 80, 78, 71],
+            false,
+            LongCaptureAction::Finish,
+            |_| Err("clipboard busy".to_string()),
+        )
+        .err()
+        .unwrap();
+
+        assert_eq!(error, "clipboard busy");
+    }
+
+    #[test]
+    fn edit_does_not_write_the_clipboard() {
+        let copy_calls = Rc::new(Cell::new(0));
+        let calls = Rc::clone(&copy_calls);
+        finalize_capture_result(
+            vec![137, 80, 78, 71],
+            false,
+            LongCaptureAction::Edit,
+            move |_| {
+                calls.set(calls.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(copy_calls.get(), 0);
     }
 
     #[test]
