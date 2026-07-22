@@ -358,8 +358,8 @@ fn append_matched_candidate(
         .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
     let next_gray = downscale_grayscale(&candidate, 4)
         .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
-    let static_regions = detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2)
-        .unwrap_or_default();
+    let static_regions =
+        detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2).unwrap_or_default();
     let before_height = stitcher.height();
     stitcher
         .append_with_static_regions(
@@ -556,11 +556,9 @@ fn run_capture(
                     MatchDirection::Reverse => session
                         .reverse_detected()
                         .map_err(|_| "invalid reverse-match transition")?,
-                    MatchDirection::Unmatched => {
-                        session
-                            .unmatched()
-                            .map_err(|_| "invalid unmatched transition")?
-                    }
+                    MatchDirection::Unmatched => session
+                        .unmatched()
+                        .map_err(|_| "invalid unmatched transition")?,
                 }
             }
             Observation::IdleComplete => {

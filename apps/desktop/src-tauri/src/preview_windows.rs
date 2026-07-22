@@ -64,10 +64,7 @@ pub(crate) struct MaskLayout {
     pub edge_length: i32,
 }
 
-pub(crate) fn mask_window_layouts(
-    selection: ScreenRect,
-    monitor: ScreenRect,
-) -> Vec<MaskLayout> {
+pub(crate) fn mask_window_layouts(selection: ScreenRect, monitor: ScreenRect) -> Vec<MaskLayout> {
     let monitor_right = monitor.x + monitor.width;
     let monitor_bottom = monitor.y + monitor.height;
     let selection_right = selection.x + selection.width;
@@ -436,9 +433,7 @@ mod tests {
                 },
             ]
         );
-        assert!(masks
-            .iter()
-            .all(|mask| !intersects(selection, mask.rect)));
+        assert!(masks.iter().all(|mask| !intersects(selection, mask.rect)));
         assert_eq!(
             masks.iter().map(|mask| area(mask.rect)).sum::<i64>(),
             area(monitor) - area(selection)
@@ -465,7 +460,9 @@ mod tests {
         assert_eq!(masks.len(), 1);
         assert_eq!(masks[0].label, "scroll-mask-right");
         assert_eq!(masks[0].rect.width, 720);
-        assert!(masks.iter().all(|mask| mask.rect.width > 0 && mask.rect.height > 0));
+        assert!(masks
+            .iter()
+            .all(|mask| mask.rect.width > 0 && mask.rect.height > 0));
     }
 
     #[test]

@@ -216,15 +216,10 @@ fn refine_direction(
     let fine_end = fine_center
         .saturating_add(FINE_TOLERANCE_ROWS)
         .min(fine_upper);
-    let fine = find_vertical_overlap_in_range(
-        previous_fine,
-        next_fine,
-        fine_start..=fine_end,
-        1.5,
-        0.65,
-    )
-    .ok()
-    .filter(|matched| matched.mean_error <= MAX_MEAN_ERROR)?;
+    let fine =
+        find_vertical_overlap_in_range(previous_fine, next_fine, fine_start..=fine_end, 1.5, 0.65)
+            .ok()
+            .filter(|matched| matched.mean_error <= MAX_MEAN_ERROR)?;
 
     Some(DirectionalMatch {
         overlap_rows: fine.overlap_rows.saturating_mul(4),
@@ -266,18 +261,8 @@ pub fn match_vertical_scroll(
     let next_fine = downscale_grayscale(next, 4)?;
 
     Ok(select_direction(
-        refine_direction(
-            &previous_coarse,
-            &next_coarse,
-            &previous_fine,
-            &next_fine,
-        ),
-        refine_direction(
-            &next_coarse,
-            &previous_coarse,
-            &next_fine,
-            &previous_fine,
-        ),
+        refine_direction(&previous_coarse, &next_coarse, &previous_fine, &next_fine),
+        refine_direction(&next_coarse, &previous_coarse, &next_fine, &previous_fine),
     ))
 }
 
