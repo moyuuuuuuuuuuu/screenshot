@@ -15,8 +15,10 @@ use super::RawMonitorFrame;
 
 mod capture_exclusion;
 mod target;
+mod window_opacity;
 pub use capture_exclusion::{exclude_window_from_capture, restore_window_capture};
 pub use target::{focus_capture_target, locate_capture_target, validate_capture_target};
+pub use window_opacity::set_window_opacity;
 
 #[derive(Clone, Copy)]
 struct MonitorDescriptor {

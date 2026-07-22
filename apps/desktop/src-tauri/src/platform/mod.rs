@@ -66,6 +66,11 @@ pub fn restore_window_capture(window: &tauri::WebviewWindow) -> Result<(), Strin
     windows::restore_window_capture(window)
 }
 
+#[cfg(windows)]
+pub fn set_window_opacity(window: &tauri::WebviewWindow, alpha: u8) -> Result<(), String> {
+    windows::set_window_opacity(window, alpha)
+}
+
 #[cfg(not(windows))]
 pub fn exclude_window_from_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
     Err("window capture exclusion is currently supported only on Windows".to_string())
@@ -74,6 +79,11 @@ pub fn exclude_window_from_capture(_window: &tauri::WebviewWindow) -> Result<(),
 #[cfg(not(windows))]
 pub fn restore_window_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
     Err("window capture affinity is currently supported only on Windows".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn set_window_opacity(_window: &tauri::WebviewWindow, _alpha: u8) -> Result<(), String> {
+    Err("window opacity is currently supported only on Windows".to_string())
 }
 
 #[cfg(not(windows))]

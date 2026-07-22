@@ -235,7 +235,8 @@ pub(crate) fn open_capture_mask_windows(
             .inner_size(layout.rect.width as f64, layout.rect.height as f64)
             .position(layout.rect.x as f64, layout.rect.y as f64)
             .decorations(false)
-            .transparent(true)
+            .transparent(false)
+            .background_color(tauri::window::Color(0, 0, 0, 255))
             .always_on_top(true)
             .skip_taskbar(true)
             .resizable(false)
@@ -256,6 +257,8 @@ pub(crate) fn open_capture_mask_windows(
             window
                 .set_ignore_cursor_events(false)
                 .map_err(|error| format!("failed to block input for {}: {error}", layout.label))?;
+            crate::platform::set_window_opacity(&window, 77)
+                .map_err(|error| format!("failed to set {} opacity: {error}", layout.label))?;
             Ok(window)
         })();
         match result {

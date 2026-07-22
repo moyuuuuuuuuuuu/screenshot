@@ -394,15 +394,15 @@ fn append_stable_candidate(
     }
 }
 
-fn prepare_capture_windows(
-    open_and_exclude_masks: impl FnOnce() -> Result<(), String>,
-    open_and_exclude_preview: impl FnOnce() -> Result<(), String>,
+fn prepare_capture_windows<M, P>(
+    open_and_exclude_masks: impl FnOnce() -> Result<M, String>,
+    open_and_exclude_preview: impl FnOnce() -> Result<P, String>,
     hide_overlay: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    open_and_exclude_masks()?;
-    open_and_exclude_preview()?;
+) -> Result<(M, P), String> {
+    let masks = open_and_exclude_masks()?;
+    let preview = open_and_exclude_preview()?;
     hide_overlay()?;
-    Ok(())
+    Ok((masks, preview))
 }
 
 #[cfg(test)]
@@ -612,7 +612,7 @@ pub async fn start_long_capture(
         let close_app = app.clone();
         let unregister_app = app.clone();
         let escape_registered = app.global_shortcut().register("Escape").is_ok();
-        let _cleanup = CaptureCleanup::new(
+        let cleanup = CaptureCleanup::new(
             move || match overlay_cleanup(
                 restore_app
                     .state::<LongCaptureRuntime>()
@@ -664,7 +664,7 @@ pub async fn start_long_capture(
             height: region.height.round() as i32,
         };
         let monitor = capture_monitor_rect(&app, region)?;
-        prepare_capture_windows(
+        let capture_windows = prepare_capture_windows(
             || {
                 let masks = open_capture_mask_windows(&app, selection, monitor)?;
                 for mask in &masks {
@@ -675,11 +675,12 @@ pub async fn start_long_capture(
                         return Err(error);
                     }
                 }
-                Ok(())
+                Ok(masks)
             },
             || {
                 let preview = open_controls_window(&app, region, monitor)?;
-                platform::exclude_window_from_capture(&preview)
+                platform::exclude_window_from_capture(&preview)?;
+                Ok(preview)
             },
             || {
                 window
@@ -688,7 +689,10 @@ pub async fn start_long_capture(
             },
         )?;
         std::thread::sleep(Duration::from_millis(150));
-        run_capture(&runtime, region)
+        let capture_result = run_capture(&runtime, region);
+        drop(cleanup);
+        drop(capture_windows);
+        capture_result
     })();
     runtime.finish();
     result
@@ -737,7 +741,15 @@ mod tests {
     };
     use crate::platform::RawMonitorFrame;
     use crate::stitcher::{ChunkedStitcher, RgbaFrame};
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::Cell, cell::RefCell, rc::Rc};
+
+    struct DropProbe(Rc<Cell<u32>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
 
     fn document_frame(start_row: u32, height: u32, width: u32) -> RgbaFrame {
         let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
@@ -819,6 +831,24 @@ mod tests {
     }
 
     #[test]
+    fn preparation_returns_temporary_windows_to_keep_them_alive() {
+        let drops = Rc::new(Cell::new(0));
+        let mask_drop = drops.clone();
+        let preview_drop = drops.clone();
+
+        let retained = prepare_capture_windows(
+            || Ok(DropProbe(mask_drop)),
+            || Ok(DropProbe(preview_drop)),
+            || Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(drops.get(), 0);
+        drop(retained);
+        assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
     fn preparation_does_not_open_preview_when_mask_creation_fails() {
         let events = Rc::new(std::cell::RefCell::new(Vec::new()));
         let mask_events = events.clone();
@@ -828,7 +858,7 @@ mod tests {
         let result = prepare_capture_windows(
             || {
                 mask_events.borrow_mut().push("masks");
-                Err("mask creation failed".to_string())
+                Err::<(), String>("mask creation failed".to_string())
             },
             || {
                 preview_events.borrow_mut().push("preview");
