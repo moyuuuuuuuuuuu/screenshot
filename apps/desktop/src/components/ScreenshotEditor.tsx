@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
+import { captureSessionReducer, initialCaptureSession } from '../domain/capture-session';
 import {
   addAnnotation,
   createEditorHistory,
@@ -46,7 +47,12 @@ function errorMessage(error: unknown): string {
 }
 
 export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
-  const [selection, setSelection] = useState<Rect | null>(null);
+  const [captureSession, dispatchCapture] = useReducer(
+    captureSessionReducer,
+    sourceUrl,
+    initialCaptureSession,
+  );
+  const selection = captureSession.selection;
   const [activeTool, setActiveTool] = useState<Tool>('rectangle');
   const [history, setHistory] = useState<EditorHistory>(createEditorHistory);
   const [textPosition, setTextPosition] = useState<Point | null>(null);
@@ -71,6 +77,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     longCaptureSource.current = null;
     setLongCaptureBounds(null);
     setEditorSourceUrl(sourceUrl);
+    dispatchCapture({ type: 'selectionChanged', rect: null });
   }, [sourceUrl]);
 
   useEffect(() => () => {
@@ -239,6 +246,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
 
   const startLongCapture = useCallback(async () => {
     if (!selection || longCaptureProgress) return;
+    dispatchCapture({ type: 'scrollStarted' });
     setError(null);
     setLongCaptureProgress({
       frameCount: 0,
@@ -254,10 +262,11 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       generatedSourceUrl.current = resultUrl;
       longCaptureSource.current = result.png;
       setEditorSourceUrl(resultUrl);
+      dispatchCapture({ type: 'scrollEditRequested', imageUrl: resultUrl });
       setHistory(createEditorHistory());
-      setSelection(null);
       if (result.partial) setError('长截图已停止，已保留部分结果');
     } catch (captureError) {
+      dispatchCapture({ type: 'scrollCancelled' });
       console.error('Long capture failed', captureError);
       setError(`长截图失败：${errorMessage(captureError)}`);
     } finally {
@@ -335,7 +344,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       height: image.naturalHeight * scale,
     };
     setLongCaptureBounds(bounds);
-    setSelection(bounds);
+    dispatchCapture({ type: 'selectionCommitted', rect: bounds });
   };
 
   useLayoutEffect(() => {
@@ -344,7 +353,11 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   }, [activeTool, showToolbar, toolbarWidth]);
 
   return (
-    <main className="screenshot-editor" aria-label="截图编辑器">
+    <main
+      className="screenshot-editor"
+      aria-label="截图编辑器"
+      data-capture-mode={captureSession.mode}
+    >
       {editorSourceUrl ? (
         <img
           ref={sourceImage}
@@ -377,7 +390,10 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
         selection={selection}
         bounds={viewportBounds}
         locked={Boolean(showToolbar)}
-        onSelectionChange={setSelection}
+        onSelectionChange={(nextSelection) => dispatchCapture({
+          type: 'selectionCommitted',
+          rect: nextSelection,
+        })}
       />
       {textPosition ? (
         <TextEditor

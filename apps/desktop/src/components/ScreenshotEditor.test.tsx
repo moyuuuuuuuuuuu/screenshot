@@ -28,6 +28,19 @@ describe('ScreenshotEditor', () => {
     );
   });
 
+  it('publishes the centralized capture mode as selection is committed', () => {
+    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} />);
+    const editor = screen.getByLabelText('截图编辑器');
+    expect(editor).toHaveAttribute('data-capture-mode', 'selecting');
+
+    const overlay = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(overlay, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(overlay, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(overlay, { clientX: 220, clientY: 180, pointerId: 1 });
+
+    expect(editor).toHaveAttribute('data-capture-mode', 'annotating');
+  });
+
   it('creates a normalized selection from a reverse drag', () => {
     render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} />);
     const overlay = screen.getByTestId('selection-surface');
