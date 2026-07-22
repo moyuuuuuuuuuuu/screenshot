@@ -24,6 +24,19 @@ pub(crate) struct PreviewLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PreviewWindowPolicy {
+    focused: bool,
+    focusable: bool,
+}
+
+fn preview_window_policy() -> PreviewWindowPolicy {
+    PreviewWindowPolicy {
+        focused: false,
+        focusable: true,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BorderLayout {
     pub label: &'static str,
     pub rect: ScreenRect,
@@ -131,6 +144,7 @@ pub(crate) fn open_preview_window(
         PreviewSide::Left => "left",
         PreviewSide::Right => "right",
     };
+    let policy = preview_window_policy();
     WebviewWindowBuilder::new(
         app,
         "scroll-capture-preview",
@@ -145,6 +159,8 @@ pub(crate) fn open_preview_window(
     .skip_taskbar(true)
     .resizable(false)
     .shadow(false)
+    .focused(policy.focused)
+    .focusable(policy.focusable)
     .build()
     .map_err(|error| format!("failed to open scroll preview: {error}"))
 }
@@ -210,7 +226,8 @@ pub(crate) fn open_capture_border_windows(
 #[cfg(test)]
 mod tests {
     use super::{
-        border_window_layouts, preview_window_layout, PreviewLayout, PreviewSide, ScreenRect,
+        border_window_layouts, preview_window_layout, preview_window_policy, PreviewLayout,
+        PreviewSide, ScreenRect,
     };
 
     fn intersects(a: ScreenRect, b: ScreenRect) -> bool {
@@ -368,5 +385,13 @@ mod tests {
         assert!(borders
             .iter()
             .all(|border| !intersects(selection, border.rect)));
+    }
+
+    #[test]
+    fn sidecar_does_not_take_focus_when_created() {
+        let policy = preview_window_policy();
+
+        assert!(!policy.focused);
+        assert!(policy.focusable);
     }
 }
