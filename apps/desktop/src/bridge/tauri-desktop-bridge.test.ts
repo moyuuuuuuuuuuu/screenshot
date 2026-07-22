@@ -43,11 +43,34 @@ describe('createTauriDesktopBridge', () => {
 
     const result = await bridge.startLongCapture(region, progress);
     await bridge.stopLongCapture();
+    await bridge.cancelLongCapture();
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'start_long_capture', { region });
     expect(invoke).toHaveBeenNthCalledWith(2, 'stop_long_capture');
+    expect(invoke).toHaveBeenNthCalledWith(3, 'cancel_long_capture');
     expect(result.partial).toBe(true);
     expect(result.png).toMatchObject({ size: 3, type: 'image/png' });
-    expect(progress).toHaveBeenCalledWith({ frameCount: 0, stitchedHeight: 0, state: 'preparing' });
+    expect(progress).toHaveBeenCalledWith({
+      frameCount: 0,
+      stitchedHeight: 0,
+      state: 'preparing',
+      previewPngBytes: [],
+      warning: false,
+    });
+  });
+
+  it('reads expanded long capture progress', async () => {
+    const progress = {
+      frameCount: 4,
+      stitchedHeight: 1600,
+      state: 'observing',
+      previewPngBytes: [1, 2, 3],
+      warning: false,
+    } as const;
+    const invoke = vi.fn().mockResolvedValue(progress);
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.getLongCaptureProgress()).resolves.toEqual(progress);
+    expect(invoke).toHaveBeenCalledWith('long_capture_progress');
   });
 });

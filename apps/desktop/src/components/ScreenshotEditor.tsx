@@ -240,7 +240,13 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const startLongCapture = useCallback(async () => {
     if (!selection || longCaptureProgress) return;
     setError(null);
-    setLongCaptureProgress({ frameCount: 0, stitchedHeight: 0, state: 'preparing' });
+    setLongCaptureProgress({
+      frameCount: 0,
+      stitchedHeight: 0,
+      state: 'preparing',
+      previewPngBytes: [],
+      warning: false,
+    });
     try {
       const result = await bridge.startLongCapture(selection, setLongCaptureProgress);
       if (generatedSourceUrl.current) URL.revokeObjectURL(generatedSourceUrl.current);
@@ -406,13 +412,6 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
             onDrawingWidthChange={activeTool === 'mosaic' ? setMosaicWidth : setPenWidth}
             onAction={handleAction}
           />
-        </div>
-      ) : null}
-      {longCaptureProgress ? (
-        <div className="long-capture-status" role="status" aria-label="长截图进度" aria-live="polite">
-          <span className="long-capture-status__spinner" aria-hidden="true" />
-          <span>{longCaptureProgress.frameCount} 帧 · {longCaptureProgress.stitchedHeight} px</span>
-          <button type="button" onClick={() => void bridge.stopLongCapture()}>停止</button>
         </div>
       ) : null}
       {error ? <div className="editor-alert" role="alert">{error}</div> : null}

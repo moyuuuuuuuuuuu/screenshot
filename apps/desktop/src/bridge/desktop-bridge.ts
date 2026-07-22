@@ -3,7 +3,10 @@ import type { Rect } from '../domain/geometry';
 export type LongCaptureProgress = Readonly<{
   frameCount: number;
   stitchedHeight: number;
-  state: 'preparing' | 'capturing' | 'scrolling' | 'stabilizing' | 'matching';
+  state: 'preparing' | 'observing' | 'scrolling' | 'stabilizing' | 'matching'
+    | 'pausedReverse' | 'warning' | 'completed' | 'partial' | 'cancelled' | 'failed';
+  previewPngBytes: readonly number[];
+  warning: boolean;
 }>;
 
 export type LongCaptureResult = Readonly<{
@@ -20,4 +23,6 @@ export interface DesktopBridge {
     onProgress: (progress: LongCaptureProgress) => void,
   ): Promise<LongCaptureResult>;
   stopLongCapture(): Promise<void>;
+  cancelLongCapture(): Promise<void>;
+  getLongCaptureProgress(): Promise<LongCaptureProgress>;
 }

@@ -5,7 +5,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
@@ -247,6 +247,68 @@ fn publish_progress(runtime: &LongCaptureRuntime, session: &LongCaptureSession, 
     );
 }
 
+fn control_window_x(
+    selection_x: i32,
+    selection_width: i32,
+    monitor_x: i32,
+    monitor_width: i32,
+    controls_width: i32,
+) -> i32 {
+    let right = selection_x + selection_width + 12;
+    if right + controls_width <= monitor_x + monitor_width {
+        right
+    } else {
+        (selection_x - controls_width - 12).max(monitor_x + 8)
+    }
+}
+
+fn open_controls_window(app: &tauri::AppHandle, region: CaptureRegion) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window("long-capture-controls") {
+        let _ = existing.close();
+    }
+    let frames = platform::capture_monitors()?;
+    let center_x = (region.x + region.width / 2.0).round() as i32;
+    let center_y = (region.y + region.height / 2.0).round() as i32;
+    let monitor = frames
+        .iter()
+        .find(|frame| {
+            center_x >= frame.x
+                && center_y >= frame.y
+                && center_x < frame.x + frame.width as i32
+                && center_y < frame.y + frame.height as i32
+        })
+        .ok_or_else(|| "cannot place long-capture controls outside the selection".to_string())?;
+    let width = 148_i32;
+    let height = 280_i32.min(monitor.height as i32 - 16).max(120);
+    let x = control_window_x(
+        region.x.round() as i32,
+        region.width.round() as i32,
+        monitor.x,
+        monitor.width as i32,
+        width,
+    );
+    let y = (region.y.round() as i32)
+        .max(monitor.y + 8)
+        .min(monitor.y + monitor.height as i32 - height - 8);
+    WebviewWindowBuilder::new(
+        app,
+        "long-capture-controls",
+        WebviewUrl::App("index.html?window=long-capture-controls".into()),
+    )
+    .title("长截图")
+    .inner_size(width as f64, height as f64)
+    .position(x as f64, y as f64)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .shadow(false)
+    .build()
+    .map_err(|error| format!("failed to open long-capture controls: {error}"))?;
+    Ok(())
+}
+
 fn run_capture(
     runtime: &LongCaptureRuntime,
     region: CaptureRegion,
@@ -331,7 +393,11 @@ fn run_capture(
                             .forward_matched(candidate.height - overlap_rows)
                             .map_err(|_| "invalid forward-match transition")?;
                         accepted_tail = candidate;
-                        preview_png = encode_png(&accepted_tail)?;
+                        preview_png = encode_png(
+                            &stitcher
+                                .preview()
+                                .map_err(|error| format!("preview failed: {error:?}"))?,
+                        )?;
                         observer.mark_appended(started.elapsed());
                     }
                     MatchDirection::Reverse => session
@@ -412,6 +478,7 @@ pub async fn start_long_capture(
         window
             .set_ignore_cursor_events(true)
             .map_err(|error| format!("failed to enable overlay pass-through: {error}"))?;
+        open_controls_window(&app, region)?;
         std::thread::sleep(Duration::from_millis(150));
         let capture = run_capture(&runtime, region);
         if escape_registered {
@@ -469,6 +536,12 @@ mod tests {
         }
         assert_eq!(restored.get(), 1);
         assert_eq!(closed.get(), 1);
+    }
+
+    #[test]
+    fn controls_prefer_the_right_side_and_fall_back_to_the_left() {
+        assert_eq!(super::control_window_x(100, 300, 0, 1920, 148), 412);
+        assert_eq!(super::control_window_x(1800, 100, 0, 1920, 148), 1640);
     }
 
     #[test]

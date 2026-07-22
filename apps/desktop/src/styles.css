@@ -6,6 +6,8 @@
 
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+.long-capture-presentation, .long-capture-presentation body, .long-capture-presentation #root { background: transparent; }
+.long-capture-presentation .screenshot-editor { visibility: hidden; }
 button { font: inherit; }
 
 .screenshot-editor {
@@ -73,7 +75,16 @@ button { font: inherit; }
 
 .editor-alert { position: absolute; left: 50%; bottom: 28px; z-index: 10; transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }
 .capture-error { position: absolute; left: 50%; top: 28px; z-index: 11; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }
-.long-capture-status { position: absolute; left: 50%; bottom: 28px; z-index: 10; display: flex; align-items: center; gap: 10px; transform: translateX(-50%); padding: 9px 12px; border: 1px solid #3d4b56; border-radius: 9px; background: #171b20; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4); font-size: 13px; }
-.long-capture-status button { padding: 4px 10px; border: 1px solid #704047; border-radius: 6px; color: #ffb7bd; background: #3b2025; cursor: pointer; }
-.long-capture-status__spinner { width: 14px; height: 14px; border: 2px solid #315362; border-top-color: #63ccef; border-radius: 50%; animation: long-capture-spin 0.8s linear infinite; }
-@keyframes long-capture-spin { to { transform: rotate(360deg); } }
+
+.long-capture-controls { display: flex; width: 100vw; height: 100vh; padding: 8px; flex-direction: column; gap: 8px; border: 1px solid #303740; border-radius: 12px; background: #171b20; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45); }
+.long-capture-controls--warning { border-color: #d39443; }
+.long-capture-controls__preview { position: relative; display: grid; min-height: 0; flex: 1; place-items: center; overflow: hidden; border-radius: 7px; background: #0e1114; }
+.long-capture-controls__preview img { width: 100%; height: 100%; object-fit: cover; object-position: bottom; }
+.long-capture-controls__warning { position: absolute; top: 6px; right: 6px; display: grid; width: 28px; height: 28px; place-items: center; border-radius: 7px; color: #ffc46b; background: rgba(61, 39, 15, 0.92); }
+.long-capture-controls__warning svg { width: 20px; height: 20px; }
+.long-capture-controls__actions { display: flex; justify-content: center; gap: 8px; }
+.long-capture-controls__button { display: grid; width: 36px; height: 36px; padding: 8px; place-items: center; border: 0; border-radius: 7px; background: #252b32; cursor: pointer; }
+.long-capture-controls__button svg { width: 20px; height: 20px; stroke-linecap: round; stroke-linejoin: round; }
+.long-capture-controls__button--stop { color: #5cda98; }
+.long-capture-controls__button--cancel { color: #ff7373; }
+.long-capture-controls__button:hover { background: #303740; }

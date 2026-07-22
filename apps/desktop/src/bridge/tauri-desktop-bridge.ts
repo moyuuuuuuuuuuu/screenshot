@@ -1,10 +1,28 @@
 import type { DesktopBridge } from './desktop-bridge';
-import type { LongCaptureResult } from './desktop-bridge';
+import type { LongCaptureProgress, LongCaptureResult } from './desktop-bridge';
 
 export type TauriInvoke = (
   command: string,
   args?: Record<string, unknown>,
 ) => Promise<unknown>;
+
+const progressStates = new Set<LongCaptureProgress['state']>([
+  'preparing', 'observing', 'scrolling', 'stabilizing', 'matching',
+  'pausedReverse', 'warning', 'completed', 'partial', 'cancelled', 'failed',
+]);
+
+function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
+  if (!value || typeof value !== 'object') throw new Error('invalid long capture progress');
+  const progress = value as Record<string, unknown>;
+  if (
+    typeof progress.frameCount !== 'number'
+    || typeof progress.stitchedHeight !== 'number'
+    || !progressStates.has(progress.state as LongCaptureProgress['state'])
+    || !Array.isArray(progress.previewPngBytes)
+    || typeof progress.warning !== 'boolean'
+  ) throw new Error('invalid long capture progress');
+  return progress as LongCaptureProgress;
+}
 
 async function blobBytes(blob: Blob): Promise<number[]> {
   const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -36,18 +54,16 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
       await invoke('close_overlay');
     },
     async startLongCapture(region, onProgress) {
-      onProgress({ frameCount: 0, stitchedHeight: 0, state: 'preparing' });
+      onProgress({
+        frameCount: 0,
+        stitchedHeight: 0,
+        state: 'preparing',
+        previewPngBytes: [],
+        warning: false,
+      });
       const progressTimer = window.setInterval(() => {
         void invoke('long_capture_progress').then((value) => {
-          if (!value || typeof value !== 'object') return;
-          const progress = value as Record<string, unknown>;
-          if (
-            typeof progress.frameCount === 'number'
-            && typeof progress.stitchedHeight === 'number'
-            && ['preparing', 'capturing', 'scrolling', 'stabilizing', 'matching'].includes(String(progress.state))
-          ) {
-            onProgress(progress as unknown as Parameters<typeof onProgress>[0]);
-          }
+          onProgress(parseLongCaptureProgress(value));
         }).catch(() => undefined);
       }, 120);
       let value: unknown;
@@ -68,6 +84,12 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     },
     async stopLongCapture() {
       await invoke('stop_long_capture');
+    },
+    async cancelLongCapture() {
+      await invoke('cancel_long_capture');
+    },
+    async getLongCaptureProgress() {
+      return parseLongCaptureProgress(await invoke('long_capture_progress'));
     },
   };
 }

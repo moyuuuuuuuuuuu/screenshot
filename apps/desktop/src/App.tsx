@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { DesktopBridge } from './bridge/desktop-bridge';
 import { createTauriDesktopBridge } from './bridge/tauri-desktop-bridge';
 import { ScreenshotEditor } from './components/ScreenshotEditor';
+import { LongCaptureControls } from './components/LongCaptureControls';
 import './styles.css';
 
 type MonitorFrame = Readonly<{
@@ -22,6 +23,7 @@ export function createAppDesktopBridge(): DesktopBridge {
 const desktopBridge = createAppDesktopBridge();
 
 export function App() {
+  const controlWindow = new URLSearchParams(window.location.search).get('window') === 'long-capture-controls';
   const [sourceUrl, setSourceUrl] = useState('');
   const [session, setSession] = useState(0);
   const [captureError, setCaptureError] = useState<string | null>(null);
@@ -47,12 +49,18 @@ export function App() {
     void listen<string>('capture-error', (event) => {
       setCaptureError(event.payload);
     }).then(retainUnlisten).catch(() => undefined);
+    void listen<boolean>('long-capture-presentation', (event) => {
+      document.documentElement.classList.toggle('long-capture-presentation', event.payload);
+    }).then(retainUnlisten).catch(() => undefined);
 
     return () => {
       disposed = true;
+      document.documentElement.classList.remove('long-capture-presentation');
       unlistenCallbacks.forEach((unlisten) => unlisten());
     };
   }, []);
+
+  if (controlWindow) return <LongCaptureControls bridge={desktopBridge} />;
 
   return (
     <>

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DesktopBridge } from '../bridge/desktop-bridge';
+import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
 import { ScreenshotEditor } from './ScreenshotEditor';
 
 function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
@@ -14,6 +14,8 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
       partial: false,
     }),
     stopLongCapture: vi.fn().mockResolvedValue(undefined),
+    cancelLongCapture: vi.fn().mockResolvedValue(undefined),
+    getLongCaptureProgress: vi.fn(),
     ...overrides,
   };
 }
@@ -156,8 +158,8 @@ describe('ScreenshotEditor', () => {
     expect(createObjectUrl).toHaveBeenCalledOnce();
   });
 
-  it('shows progress and Esc stops capture without closing the overlay', async () => {
-    let reportProgress: ((progress: { frameCount: number; stitchedHeight: number; state: 'matching' }) => void) | undefined;
+  it('keeps progress in the separate controls window and Esc stops without closing the overlay', async () => {
+    let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
     let finishCapture: ((result: { png: Blob; partial: boolean }) => void) | undefined;
     const bridge = createBridge({
       startLongCapture: vi.fn((_region, onProgress) => {
@@ -172,8 +174,14 @@ describe('ScreenshotEditor', () => {
     fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
     await userEvent.click(screen.getByRole('button', { name: '长截图' }));
 
-    reportProgress?.({ frameCount: 3, stitchedHeight: 1240, state: 'matching' });
-    expect(await screen.findByRole('status', { name: '长截图进度' })).toHaveTextContent('3 帧 · 1240 px');
+    reportProgress?.({
+      frameCount: 3,
+      stitchedHeight: 1240,
+      state: 'matching',
+      previewPngBytes: [],
+      warning: false,
+    });
+    expect(screen.queryByRole('status', { name: '长截图进度' })).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
 
     expect(bridge.stopLongCapture).toHaveBeenCalledOnce();

@@ -246,6 +246,27 @@ impl ChunkedStitcher {
         self.height
     }
 
+    pub fn preview(&self) -> Result<RgbaFrame, MatchError> {
+        let width = self.width.ok_or(MatchError::InvalidFrame)?;
+        let footer_height = self
+            .pending_footer
+            .as_ref()
+            .map_or(0, |footer| footer.height);
+        let height = self.height.saturating_add(footer_height);
+        let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
+        for chunk in &self.chunks {
+            pixels.extend_from_slice(&chunk.pixels);
+        }
+        if let Some(footer) = &self.pending_footer {
+            pixels.extend_from_slice(&footer.pixels);
+        }
+        Ok(RgbaFrame {
+            width,
+            height,
+            pixels,
+        })
+    }
+
     pub fn append_with_static_regions(
         &mut self,
         frame: RgbaFrame,
@@ -418,6 +439,16 @@ mod tests {
         stitcher.append(second, 2).unwrap();
         assert_eq!(stitcher.height(), 6);
         assert_eq!(stitcher.finish().unwrap(), expected);
+    }
+
+    #[test]
+    fn preview_contains_all_chunks_without_consuming_the_stitcher() {
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(document_frame(0, 4, 2), 0).unwrap();
+        stitcher.append(document_frame(2, 4, 2), 2).unwrap();
+
+        assert_eq!(stitcher.preview().unwrap(), document_frame(0, 6, 2));
+        assert_eq!(stitcher.finish().unwrap(), document_frame(0, 6, 2));
     }
 
     #[test]
