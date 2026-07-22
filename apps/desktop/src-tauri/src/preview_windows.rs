@@ -62,7 +62,7 @@ pub(crate) fn open_preview_window(
     app: &tauri::AppHandle,
     selection: ScreenRect,
     monitor: ScreenRect,
-) -> Result<(), String> {
+) -> Result<tauri::WebviewWindow, String> {
     if let Some(existing) = tauri::Manager::get_webview_window(app, "scroll-capture-preview") {
         let _ = existing.close();
     }
@@ -86,8 +86,7 @@ pub(crate) fn open_preview_window(
     .resizable(false)
     .shadow(false)
     .build()
-    .map_err(|error| format!("failed to open scroll preview: {error}"))?;
-    Ok(())
+    .map_err(|error| format!("failed to open scroll preview: {error}"))
 }
 
 #[cfg(test)]

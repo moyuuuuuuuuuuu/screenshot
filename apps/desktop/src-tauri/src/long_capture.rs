@@ -327,22 +327,40 @@ fn publish_progress(
     );
 }
 
-fn open_controls_window(app: &tauri::AppHandle, region: CaptureRegion) -> Result<(), String> {
+fn prepare_capture_windows(
+    exclude_overlay: impl FnOnce() -> Result<(), String>,
+    open_and_exclude_preview: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    exclude_overlay()?;
+    open_and_exclude_preview()?;
+    Ok(())
+}
+
+fn open_controls_window(
+    app: &tauri::AppHandle,
+    region: CaptureRegion,
+) -> Result<tauri::WebviewWindow, String> {
     if let Some(existing) = app.get_webview_window("scroll-capture-preview") {
         let _ = existing.close();
     }
-    let frames = platform::capture_monitors()?;
     let center_x = (region.x + region.width / 2.0).round() as i32;
     let center_y = (region.y + region.height / 2.0).round() as i32;
-    let monitor = frames
-        .iter()
-        .find(|frame| {
-            center_x >= frame.x
-                && center_y >= frame.y
-                && center_x < frame.x + frame.width as i32
-                && center_y < frame.y + frame.height as i32
+    let monitors = app
+        .available_monitors()
+        .map_err(|error| format!("failed to read monitor layout: {error}"))?;
+    let monitor = monitors
+        .into_iter()
+        .find(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            center_x >= position.x
+                && center_y >= position.y
+                && center_x < position.x + size.width as i32
+                && center_y < position.y + size.height as i32
         })
         .ok_or_else(|| "cannot place long-capture controls outside the selection".to_string())?;
+    let position = monitor.position();
+    let size = monitor.size();
     open_preview_window(
         app,
         ScreenRect {
@@ -352,10 +370,10 @@ fn open_controls_window(app: &tauri::AppHandle, region: CaptureRegion) -> Result
             height: region.height.round() as i32,
         },
         ScreenRect {
-            x: monitor.x,
-            y: monitor.y,
-            width: monitor.width as i32,
-            height: monitor.height as i32,
+            x: position.x,
+            y: position.y,
+            width: size.width as i32,
+            height: size.height as i32,
         },
     )
 }
@@ -563,7 +581,13 @@ pub async fn start_long_capture(
         window
             .set_ignore_cursor_events(true)
             .map_err(|error| format!("failed to enable overlay pass-through: {error}"))?;
-        open_controls_window(&app, region)?;
+        prepare_capture_windows(
+            || platform::exclude_window_from_capture(&window),
+            || {
+                let preview = open_controls_window(&app, region)?;
+                platform::exclude_window_from_capture(&preview)
+            },
+        )?;
         std::thread::sleep(Duration::from_millis(150));
         let capture = run_capture(&runtime, region);
         if escape_registered {
@@ -611,7 +635,10 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 
 #[cfg(test)]
 mod tests {
-    use super::{crop_region, termination, CaptureCleanup, CaptureRegion, CaptureTermination};
+    use super::{
+        crop_region, prepare_capture_windows, termination, CaptureCleanup, CaptureRegion,
+        CaptureTermination,
+    };
     use crate::platform::RawMonitorFrame;
     use std::{cell::Cell, rc::Rc};
 
@@ -626,6 +653,48 @@ mod tests {
         assert_eq!(runtime.requested_action(), super::LongCaptureAction::Cancel);
         runtime.request_finish();
         assert_eq!(runtime.requested_action(), super::LongCaptureAction::Finish);
+    }
+
+    #[test]
+    fn prepare_capture_windows_excludes_overlay_before_preview() {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let overlay_events = events.clone();
+        let preview_events = events.clone();
+
+        prepare_capture_windows(
+            || {
+                overlay_events.borrow_mut().push("overlay");
+                Ok(())
+            },
+            || {
+                preview_events.borrow_mut().push("preview");
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(*events.borrow(), vec!["overlay", "preview"]);
+    }
+
+    #[test]
+    fn prepare_capture_windows_does_not_open_preview_when_overlay_exclusion_fails() {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let overlay_events = events.clone();
+        let preview_events = events.clone();
+
+        let result = prepare_capture_windows(
+            || {
+                overlay_events.borrow_mut().push("overlay");
+                Err("overlay exclusion failed".to_string())
+            },
+            || {
+                preview_events.borrow_mut().push("preview");
+                Ok(())
+            },
+        );
+
+        assert_eq!(result.unwrap_err(), "overlay exclusion failed");
+        assert_eq!(*events.borrow(), vec!["overlay"]);
     }
 
     #[test]
