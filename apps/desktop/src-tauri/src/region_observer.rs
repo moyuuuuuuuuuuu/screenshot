@@ -8,6 +8,7 @@ pub const IDLE_WAIT_AFTER: Duration = Duration::from_secs(2);
 pub enum Observation {
     Unchanged,
     MotionStarted,
+    MotionFrame,
     Stabilizing,
     StableFrame,
     IdleWaiting,
@@ -45,7 +46,7 @@ impl RegionObserver {
             self.last_change = now;
             self.last_activity = now;
             if self.motion_active {
-                return Observation::Stabilizing;
+                return Observation::MotionFrame;
             }
             self.motion_active = true;
             return Observation::MotionStarted;
@@ -140,7 +141,7 @@ mod tests {
         observer.observe(&[255; 16], Duration::from_millis(100));
         assert_eq!(
             observer.observe(&[64; 16], Duration::from_millis(250)),
-            Observation::Stabilizing
+            Observation::MotionFrame
         );
         assert_eq!(
             observer.observe(&[64; 16], Duration::from_millis(450)),
@@ -149,6 +150,24 @@ mod tests {
         assert_ne!(
             observer.observe(&[64; 16], Duration::from_millis(2_050)),
             Observation::IdleWaiting
+        );
+    }
+
+    #[test]
+    fn continuous_motion_exposes_intermediate_frames_for_stitching() {
+        let mut observer = RegionObserver::new(0.25);
+        observer.observe(&[0; 16], Duration::ZERO);
+        assert_eq!(
+            observer.observe(&[32; 16], Duration::from_millis(120)),
+            Observation::MotionStarted
+        );
+        assert_eq!(
+            observer.observe(&[64; 16], Duration::from_millis(240)),
+            Observation::MotionFrame
+        );
+        assert_eq!(
+            observer.observe(&[96; 16], Duration::from_millis(360)),
+            Observation::MotionFrame
         );
     }
 

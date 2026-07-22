@@ -99,6 +99,8 @@ enum CaptureTermination {
     Completed,
 }
 
+const PREVIEW_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OverlayCleanup {
     Restore,
@@ -374,6 +376,70 @@ fn append_matched_candidate(
     Ok(stitcher.height().saturating_sub(before_height))
 }
 
+fn match_motion_candidate(
+    session: &mut LongCaptureSession,
+    stitcher: &mut ChunkedStitcher,
+    accepted_tail: &RgbaFrame,
+    candidate: &RgbaFrame,
+) -> Result<bool, String> {
+    if session.state() != LongCaptureState::Scrolling {
+        session
+            .motion_started()
+            .map_err(|_| "invalid motion transition")?;
+    }
+    session
+        .stable_frame_ready()
+        .map_err(|_| "invalid candidate-frame transition")?;
+    match match_vertical_scroll(accepted_tail, candidate)
+        .map_err(|error| format!("candidate-frame match failed: {error:?}"))?
+    {
+        MatchDirection::Forward { overlap_rows } => {
+            let added_height = append_matched_candidate(
+                stitcher,
+                accepted_tail,
+                candidate.clone(),
+                overlap_rows.min(candidate.height.saturating_sub(1)),
+            )?;
+            session
+                .forward_matched(added_height)
+                .map_err(|_| "invalid forward-match transition")?;
+            Ok(true)
+        }
+        MatchDirection::Reverse => {
+            session
+                .reverse_detected()
+                .map_err(|_| "invalid reverse-match transition")?;
+            Ok(false)
+        }
+        MatchDirection::Unmatched => {
+            session
+                .unmatched()
+                .map_err(|_| "invalid unmatched transition")?;
+            Ok(false)
+        }
+    }
+}
+
+fn observation_requires_match(
+    observation: Observation,
+    latest_motion_frame_was_appended: bool,
+) -> bool {
+    matches!(
+        observation,
+        Observation::MotionStarted | Observation::MotionFrame
+    ) || (observation == Observation::StableFrame && !latest_motion_frame_was_appended)
+}
+
+fn should_refresh_preview(
+    observation: Observation,
+    preview_dirty: bool,
+    since_last_refresh: Duration,
+) -> bool {
+    preview_dirty
+        && (observation == Observation::StableFrame
+            || since_last_refresh >= PREVIEW_UPDATE_INTERVAL)
+}
+
 #[cfg(test)]
 fn append_stable_candidate(
     stitcher: &mut ChunkedStitcher,
@@ -403,6 +469,19 @@ fn prepare_capture_windows<M, P>(
     let preview = open_and_exclude_preview()?;
     hide_overlay()?;
     Ok((masks, preview))
+}
+
+fn dismiss_temporary_windows(
+    labels: &[&str],
+    mut hide: impl FnMut(&str),
+    mut close: impl FnMut(&str),
+) {
+    for label in labels {
+        hide(label);
+    }
+    for label in labels {
+        close(label);
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +537,7 @@ fn open_controls_window(
     monitor: ScreenRect,
 ) -> Result<tauri::WebviewWindow, String> {
     if let Some(existing) = app.get_webview_window("scroll-capture-preview") {
+        let _ = existing.hide();
         let _ = existing.close();
     }
     open_preview_window(
@@ -500,6 +580,9 @@ fn run_capture(
         .map_err(|_| "failed to accept first long-capture frame")?;
     let mut accepted_tail = first;
     let mut preview_png = encode_png(&accepted_tail)?;
+    let mut latest_motion_frame_was_appended = false;
+    let mut preview_dirty = false;
+    let mut last_preview_refresh = Duration::ZERO;
     publish_progress(runtime, &session, &preview_png, accepted_tail.width);
 
     loop {
@@ -522,46 +605,37 @@ fn run_capture(
         let candidate = crop_region(platform::capture_monitors()?, region)?;
         let candidate_gray = downscale_grayscale(&candidate, 8)
             .map_err(|error| format!("observation preparation failed: {error:?}"))?;
-        match observer.observe(&candidate_gray.pixels, started.elapsed()) {
-            Observation::MotionStarted => {
-                session
-                    .motion_started()
-                    .map_err(|_| "invalid motion transition")?;
+        let observed_at = started.elapsed();
+        let observation = observer.observe(&candidate_gray.pixels, observed_at);
+        if observation == Observation::MotionStarted {
+            latest_motion_frame_was_appended = false;
+        }
+        if observation_requires_match(observation, latest_motion_frame_was_appended) {
+            latest_motion_frame_was_appended =
+                match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, &candidate)?;
+            if latest_motion_frame_was_appended {
+                accepted_tail = candidate;
+                observer.mark_appended(observed_at);
+                preview_dirty = true;
             }
-            Observation::StableFrame => {
-                session
-                    .stable_frame_ready()
-                    .map_err(|_| "invalid stable-frame transition")?;
-                match match_vertical_scroll(&accepted_tail, &candidate)
-                    .map_err(|error| format!("stable-frame match failed: {error:?}"))?
-                {
-                    MatchDirection::Forward { overlap_rows } => {
-                        let added_height = append_matched_candidate(
-                            &mut stitcher,
-                            &accepted_tail,
-                            candidate.clone(),
-                            overlap_rows.min(candidate.height.saturating_sub(1)),
-                        )?;
-                        session
-                            .forward_matched(added_height)
-                            .map_err(|_| "invalid forward-match transition")?;
-                        accepted_tail = candidate;
-                        preview_png = encode_png(
-                            &stitcher
-                                .preview()
-                                .map_err(|error| format!("preview failed: {error:?}"))?,
-                        )?;
-                        observer.mark_appended(started.elapsed());
-                    }
-                    MatchDirection::Reverse => session
-                        .reverse_detected()
-                        .map_err(|_| "invalid reverse-match transition")?,
-                    MatchDirection::Unmatched => session
-                        .unmatched()
-                        .map_err(|_| "invalid unmatched transition")?,
-                }
-            }
-            Observation::Unchanged | Observation::Stabilizing | Observation::IdleWaiting => {}
+        }
+        if should_refresh_preview(
+            observation,
+            preview_dirty,
+            observed_at.saturating_sub(last_preview_refresh),
+        ) {
+            preview_png = encode_png(
+                &stitcher
+                    .preview()
+                    .map_err(|error| format!("preview failed: {error:?}"))?,
+            )?;
+            preview_dirty = false;
+            // Start the cooldown after compression finishes so expensive previews do not
+            // immediately trigger another rebuild on the next sample.
+            last_preview_refresh = started.elapsed();
+        }
+        if observation == Observation::StableFrame {
+            latest_motion_frame_was_appended = false;
         }
         publish_progress(runtime, &session, &preview_png, accepted_tail.width);
         std::thread::sleep(SAMPLE_INTERVAL);
@@ -629,17 +703,26 @@ pub async fn start_long_capture(
                 }
             },
             move || {
-                for label in [
+                let labels = [
                     "scroll-capture-preview",
                     "scroll-mask-top",
                     "scroll-mask-right",
                     "scroll-mask-bottom",
                     "scroll-mask-left",
-                ] {
-                    if let Some(window) = close_app.get_webview_window(label) {
-                        let _ = window.close();
-                    }
-                }
+                ];
+                dismiss_temporary_windows(
+                    &labels,
+                    |label| {
+                        if let Some(window) = close_app.get_webview_window(label) {
+                            let _ = window.hide();
+                        }
+                    },
+                    |label| {
+                        if let Some(window) = close_app.get_webview_window(label) {
+                            let _ = window.close();
+                        }
+                    },
+                );
                 if escape_registered {
                     let _ = unregister_app.global_shortcut().unregister("Escape");
                 }
@@ -667,6 +750,9 @@ pub async fn start_long_capture(
                 let masks = open_capture_mask_windows(&app, selection, monitor)?;
                 for mask in &masks {
                     if let Err(error) = platform::exclude_window_from_capture(mask) {
+                        for mask in &masks {
+                            let _ = mask.hide();
+                        }
                         for mask in masks {
                             let _ = mask.close();
                         }
@@ -733,11 +819,14 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        append_stable_candidate, crop_region, overlay_cleanup, prepare_capture_windows,
-        run_cleanup_callbacks, termination, CaptureCleanup, CaptureRegion, CaptureTermination,
-        OverlayCleanup,
+        append_stable_candidate, crop_region, dismiss_temporary_windows, match_motion_candidate,
+        observation_requires_match, overlay_cleanup, prepare_capture_windows,
+        run_cleanup_callbacks, should_refresh_preview, termination, CaptureCleanup, CaptureRegion,
+        CaptureTermination, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
+    use crate::region_observer::{Observation, RegionObserver};
+    use crate::scroll_controller::LongCaptureSession;
     use crate::stitcher::{ChunkedStitcher, RgbaFrame};
     use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -787,6 +876,73 @@ mod tests {
         assert_eq!(added, Some(260));
         assert_eq!(stitcher.preview().unwrap().height, 960);
         assert_eq!(stitcher.finish().unwrap().height, 960);
+    }
+
+    #[test]
+    fn continuous_motion_frames_are_stitched_before_scrolling_stops() {
+        let first = document_frame(0, 700, 80);
+        let frames = [
+            document_frame(260, 700, 80),
+            document_frame(520, 700, 80),
+            document_frame(780, 700, 80),
+        ];
+        let mut session = LongCaptureSession::default();
+        session.start().unwrap();
+        session
+            .accept_first_frame(first.height, std::time::Duration::ZERO)
+            .unwrap();
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(first.clone(), 0).unwrap();
+        let mut observer = RegionObserver::new(0.01);
+        let first_gray = crate::stitcher::downscale_grayscale(&first, 8).unwrap();
+        observer.observe(&first_gray.pixels, std::time::Duration::ZERO);
+        let mut accepted_tail = first;
+        let mut latest_motion_frame_was_appended = false;
+
+        for (index, candidate) in frames.into_iter().enumerate() {
+            let gray = crate::stitcher::downscale_grayscale(&candidate, 8).unwrap();
+            let observation = observer.observe(
+                &gray.pixels,
+                std::time::Duration::from_millis((index as u64 + 1) * 120),
+            );
+            assert!(observation_requires_match(
+                observation,
+                latest_motion_frame_was_appended
+            ));
+            latest_motion_frame_was_appended =
+                match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, &candidate)
+                    .unwrap();
+            assert!(latest_motion_frame_was_appended);
+            accepted_tail = candidate;
+        }
+
+        assert_eq!(session.frame_count(), 4);
+        assert_eq!(session.stitched_height(), 1_480);
+        assert_eq!(stitcher.finish().unwrap().height, 1_480);
+    }
+
+    #[test]
+    fn preview_refresh_is_throttled_during_motion_but_forced_when_stable() {
+        assert!(!should_refresh_preview(
+            Observation::MotionFrame,
+            true,
+            std::time::Duration::from_millis(120),
+        ));
+        assert!(should_refresh_preview(
+            Observation::MotionFrame,
+            true,
+            std::time::Duration::from_millis(500),
+        ));
+        assert!(should_refresh_preview(
+            Observation::StableFrame,
+            true,
+            std::time::Duration::from_millis(120),
+        ));
+        assert!(!should_refresh_preview(
+            Observation::StableFrame,
+            false,
+            std::time::Duration::from_secs(1),
+        ));
     }
 
     #[test]
@@ -891,6 +1047,32 @@ mod tests {
             );
         }
         assert_eq!(*events.borrow(), vec!["controls", "overlay"]);
+    }
+
+    #[test]
+    fn temporary_windows_are_all_hidden_before_any_are_closed() {
+        let events = RefCell::new(Vec::new());
+        dismiss_temporary_windows(
+            &["preview", "top", "right", "bottom", "left"],
+            |label| events.borrow_mut().push(format!("hide:{label}")),
+            |label| events.borrow_mut().push(format!("close:{label}")),
+        );
+
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                "hide:preview",
+                "hide:top",
+                "hide:right",
+                "hide:bottom",
+                "hide:left",
+                "close:preview",
+                "close:top",
+                "close:right",
+                "close:bottom",
+                "close:left",
+            ]
+        );
     }
 
     #[test]

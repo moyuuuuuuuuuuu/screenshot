@@ -181,6 +181,7 @@ pub(crate) fn open_preview_window(
     monitor: ScreenRect,
 ) -> Result<tauri::WebviewWindow, String> {
     if let Some(existing) = tauri::Manager::get_webview_window(app, "scroll-capture-preview") {
+        let _ = existing.hide();
         let _ = existing.close();
     }
     let layout = preview_window_layout(selection, monitor)?;
@@ -218,6 +219,7 @@ pub(crate) fn open_capture_mask_windows(
     let mut windows = Vec::with_capacity(4);
     for layout in mask_window_layouts(selection, monitor) {
         if let Some(existing) = tauri::Manager::get_webview_window(app, layout.label) {
+            let _ = existing.hide();
             let _ = existing.close();
         }
         let result = (|| {
@@ -267,6 +269,9 @@ pub(crate) fn open_capture_mask_windows(
         match result {
             Ok(window) => windows.push(window),
             Err(error) => {
+                for window in &windows {
+                    let _ = window.hide();
+                }
                 for window in windows {
                     let _ = window.close();
                 }
