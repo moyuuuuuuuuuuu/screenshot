@@ -2,7 +2,7 @@ import type { Annotation } from './annotations';
 import type { Point } from './geometry';
 import { normalizeRect } from './geometry';
 
-export type Tool = 'rectangle' | 'arrow' | 'pen' | 'text' | 'mosaic';
+export type Tool = 'rectangle' | 'ellipse' | 'emoji' | 'arrow' | 'pen' | 'text' | 'mosaic';
 
 export type DrawingSession = Readonly<{
   tool: Tool;
@@ -39,7 +39,7 @@ export function finishDrawing(
   style: DrawingStyle = {},
 ): Annotation | null {
   const end = session.points.at(-1);
-  if (!end || !hasMovement(session) || session.tool === 'text') {
+  if (!end || !hasMovement(session) || session.tool === 'text' || session.tool === 'emoji') {
     return null;
   }
 
@@ -48,6 +48,14 @@ export function finishDrawing(
       return {
         id,
         kind: 'rectangle',
+        rect: normalizeRect(session.start, end),
+        stroke: '#ff4d4f',
+        strokeWidth: style.strokeWidth ?? 2,
+      };
+    case 'ellipse':
+      return {
+        id,
+        kind: 'ellipse',
         rect: normalizeRect(session.start, end),
         stroke: '#ff4d4f',
         strokeWidth: style.strokeWidth ?? 2,

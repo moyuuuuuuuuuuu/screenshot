@@ -18,6 +18,7 @@ import {
 import type { Point, Rect } from '../domain/geometry';
 import { renderAnnotations } from '../render/render-annotations';
 import { SelectionOverlay } from './SelectionOverlay';
+import { EmojiPicker } from './EmojiPicker';
 import { TextEditor } from './TextEditor';
 import { WechatToolbar, type WechatToolbarAction } from './WechatToolbar';
 
@@ -56,6 +57,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [activeTool, setActiveTool] = useState<Tool>('rectangle');
   const [history, setHistory] = useState<EditorHistory>(createEditorHistory);
   const [textPosition, setTextPosition] = useState<Point | null>(null);
+  const [selectedEmoji, setSelectedEmoji] = useState('😊');
   const [error, setError] = useState<string | null>(null);
   const [drawingPreview, setDrawingPreview] = useState<DrawingSession | null>(null);
   const [penWidth, setPenWidth] = useState(4);
@@ -136,11 +138,21 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
         setTextPosition(point);
         return;
       }
+      if (activeTool === 'emoji') {
+        setHistory((historyState) => addAnnotation(historyState, {
+          id: `annotation-${++annotationSequence.current}`,
+          kind: 'emoji',
+          position: point,
+          emoji: selectedEmoji,
+          size: 32,
+        }));
+        return;
+      }
       drawingSession.current = startDrawing(activeTool, point);
       setDrawingPreview(drawingSession.current);
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
-    [activeTool, pointInsideSelection],
+    [activeTool, pointInsideSelection, selectedEmoji],
   );
 
   const continueAnnotation = useCallback(
@@ -276,7 +288,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
 
   const handleAction = useCallback(
     (action: WechatToolbarAction) => {
-      if (['rectangle', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
+      if (['rectangle', 'ellipse', 'emoji', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
         setActiveTool(action as Tool);
         setTextPosition(null);
         return;
@@ -426,6 +438,9 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
             onDrawingWidthChange={activeTool === 'mosaic' ? setMosaicWidth : setPenWidth}
             onAction={handleAction}
           />
+          {activeTool === 'emoji' ? (
+            <EmojiPicker onSelect={setSelectedEmoji} />
+          ) : null}
         </div>
       ) : null}
       {error ? <div className="editor-alert" role="alert">{error}</div> : null}

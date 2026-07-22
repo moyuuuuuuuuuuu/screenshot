@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { SelectionOverlay } from './SelectionOverlay';
 
 describe('SelectionOverlay', () => {
+  it('shows eight WeChat green handles and a movable size chip', () => {
+    render(
+      <SelectionOverlay
+        selection={{ x: 20, y: 30, width: 100, height: 80 }}
+        bounds={{ x: 0, y: 0, width: 300, height: 200 }}
+        locked
+        onSelectionChange={vi.fn()}
+      />,
+    );
+
+    expect(document.querySelectorAll('.selection-handle[data-tone="wechat-green"]')).toHaveLength(8);
+    expect(screen.getByTestId('selection-move-handle')).toHaveTextContent('100 × 80');
+    expect(screen.getByTestId('selection-move-handle')).toHaveAttribute('data-placement', 'adaptive');
+  });
+
   it('moves an existing selection without creating a new one', () => {
     const onSelectionChange = vi.fn();
     render(

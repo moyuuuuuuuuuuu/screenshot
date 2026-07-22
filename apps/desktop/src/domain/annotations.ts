@@ -12,6 +12,22 @@ export type RectangleAnnotation = AnnotationBase &
     strokeWidth: number;
   }>;
 
+export type EllipseAnnotation = AnnotationBase &
+  Readonly<{
+    kind: 'ellipse';
+    rect: Rect;
+    stroke: string;
+    strokeWidth: number;
+  }>;
+
+export type EmojiAnnotation = AnnotationBase &
+  Readonly<{
+    kind: 'emoji';
+    position: Point;
+    emoji: string;
+    size: number;
+  }>;
+
 export type ArrowAnnotation = AnnotationBase &
   Readonly<{
     kind: 'arrow';
@@ -48,6 +64,8 @@ export type MosaicAnnotation = AnnotationBase &
 
 export type Annotation =
   | RectangleAnnotation
+  | EllipseAnnotation
+  | EmojiAnnotation
   | ArrowAnnotation
   | PenAnnotation
   | TextAnnotation

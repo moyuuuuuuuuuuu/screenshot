@@ -13,6 +13,7 @@ function createMockContext() {
     clearRect: method('clearRect'),
     drawImage: method('drawImage'),
     strokeRect: method('strokeRect'),
+    ellipse: method('ellipse'),
     beginPath: method('beginPath'),
     moveTo: method('moveTo'),
     lineTo: method('lineTo'),
@@ -89,6 +90,30 @@ describe('renderAnnotations', () => {
     expect(context.stroke).toHaveBeenCalledTimes(2);
     expect(context.fillText).toHaveBeenCalledWith('Hello', 8, 9);
     expect(context.font).toBe('18px system-ui, sans-serif');
+  });
+
+  it('renders ellipse and positioned emoji annotations', () => {
+    const context = createMockContext();
+    const annotations: readonly Annotation[] = [
+      {
+        id: 'ellipse-1', kind: 'ellipse', rect: { x: 10, y: 20, width: 60, height: 40 },
+        stroke: '#ff4d4f', strokeWidth: 2,
+      },
+      {
+        id: 'emoji-1', kind: 'emoji', position: { x: 70, y: 80 }, emoji: '😊', size: 32,
+      },
+    ];
+
+    renderAnnotations(
+      context as unknown as CanvasRenderingContext2D,
+      source,
+      annotations,
+      { width: 120, height: 100 },
+    );
+
+    expect(context.ellipse).toHaveBeenCalledWith(40, 40, 30, 20, 0, 0, Math.PI * 2);
+    expect(context.fillText).toHaveBeenCalledWith('😊', 70, 80);
+    expect(context.font).toBe('32px "Segoe UI Emoji", "Apple Color Emoji", sans-serif');
   });
 
   it('pixelates mosaic strokes from the original source', () => {

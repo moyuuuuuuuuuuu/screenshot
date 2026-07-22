@@ -144,6 +144,24 @@ describe('ScreenshotEditor', () => {
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
   });
 
+  it('places the selected emoji at the clicked canvas position', async () => {
+    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '表情' }));
+    await userEvent.click(screen.getByRole('button', { name: '微笑' }));
+    fireEvent.pointerDown(screen.getByTestId('annotation-surface'), {
+      clientX: 60,
+      clientY: 70,
+      pointerId: 2,
+    });
+
+    expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
+  });
+
   it('starts long capture for the selection and loads the result back into the editor', async () => {
     const bridge = createBridge();
     const createObjectUrl = vi.fn().mockReturnValue('blob:long-capture');

@@ -19,6 +19,21 @@ describe('drawing session', () => {
     });
   });
 
+  it('normalizes an ellipse gesture with the WeChat drawing style', () => {
+    const session = continueDrawing(
+      startDrawing('ellipse', { x: 80, y: 60 }),
+      { x: 20, y: 10 },
+    );
+
+    expect(finishDrawing(session, 'ellipse-1')).toEqual({
+      id: 'ellipse-1',
+      kind: 'ellipse',
+      rect: { x: 20, y: 10, width: 60, height: 50 },
+      stroke: '#ff4d4f',
+      strokeWidth: 2,
+    });
+  });
+
   it('retains arrow direction from start to end', () => {
     const session = continueDrawing(
       startDrawing('arrow', { x: 80, y: 60 }),
@@ -53,7 +68,7 @@ describe('drawing session', () => {
     },
   );
 
-  it.each(['rectangle', 'arrow', 'pen', 'mosaic'] as const)(
+  it.each(['rectangle', 'ellipse', 'arrow', 'pen', 'mosaic'] as const)(
     'discards zero-length %s gestures',
     (tool) => {
       expect(

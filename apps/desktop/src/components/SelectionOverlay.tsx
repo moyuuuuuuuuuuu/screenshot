@@ -103,6 +103,7 @@ export function SelectionOverlay({
           <output
             className="selection-size"
             data-testid="selection-move-handle"
+            data-placement="adaptive"
             title="拖动选区"
             onPointerDown={(event) => beginExistingSelectionDrag(event, 'move')}
             onPointerMove={updateExistingSelection}
@@ -114,6 +115,7 @@ export function SelectionOverlay({
             <span
               key={handle}
               className={`selection-handle selection-handle--${handle}`}
+              data-tone="wechat-green"
               data-testid={`selection-handle-${handle}`}
               onPointerDown={(event) => beginExistingSelectionDrag(event, handle)}
               onPointerMove={updateExistingSelection}

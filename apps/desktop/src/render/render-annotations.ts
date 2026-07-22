@@ -1,6 +1,8 @@
 import type {
   Annotation,
   ArrowAnnotation,
+  EllipseAnnotation,
+  EmojiAnnotation,
   PenAnnotation,
   RectangleAnnotation,
   TextAnnotation,
@@ -31,6 +33,32 @@ function renderRectangle(
     annotation.rect.width,
     annotation.rect.height,
   );
+}
+
+function renderEllipse(
+  context: CanvasRenderingContext2D,
+  annotation: EllipseAnnotation,
+): void {
+  configureStroke(context, annotation.stroke, annotation.strokeWidth);
+  context.beginPath();
+  context.ellipse(
+    annotation.rect.x + annotation.rect.width / 2,
+    annotation.rect.y + annotation.rect.height / 2,
+    annotation.rect.width / 2,
+    annotation.rect.height / 2,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  context.stroke();
+}
+
+function renderEmoji(
+  context: CanvasRenderingContext2D,
+  annotation: EmojiAnnotation,
+): void {
+  context.font = `${annotation.size}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+  context.fillText(annotation.emoji, annotation.position.x, annotation.position.y);
 }
 
 function renderArrow(
@@ -102,6 +130,12 @@ export function renderAnnotations(
     switch (annotation.kind) {
       case 'rectangle':
         renderRectangle(context, annotation);
+        break;
+      case 'ellipse':
+        renderEllipse(context, annotation);
+        break;
+      case 'emoji':
+        renderEmoji(context, annotation);
         break;
       case 'arrow':
         renderArrow(context, annotation);

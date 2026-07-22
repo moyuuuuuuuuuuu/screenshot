@@ -34,26 +34,26 @@ button { font: inherit; }
 
 .selection-box {
   position: absolute;
-  border: 2px solid #63ccef;
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #07c160;
+  background: transparent;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
   pointer-events: none;
 }
 
 .selection-size {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 4px 7px;
-  border-radius: 5px;
-  background: rgba(13, 17, 20, 0.92);
+  top: -28px;
+  left: 0;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: rgba(32, 32, 32, 0.88);
   color: #fff;
   font-size: 12px;
   pointer-events: auto;
   cursor: move;
 }
 
-.selection-handle { position: absolute; width: 8px; height: 8px; border: 1px solid #167da5; background: #eafaff; border-radius: 2px; transform: translate(-50%, -50%); pointer-events: auto; }
+.selection-handle { position: absolute; width: 6px; height: 6px; border: 1px solid #fff; background: #07c160; border-radius: 1px; box-shadow: 0 0 0 1px #07c160; transform: translate(-50%, -50%); pointer-events: auto; }
 .selection-handle--nw { left: 0; top: 0; }.selection-handle--n { left: 50%; top: 0; }.selection-handle--ne { left: 100%; top: 0; }
 .selection-handle--e { left: 100%; top: 50%; }.selection-handle--se { left: 100%; top: 100%; }.selection-handle--s { left: 50%; top: 100%; }
 .selection-handle--sw { left: 0; top: 100%; }.selection-handle--w { left: 0; top: 50%; }
@@ -82,6 +82,9 @@ button { font: inherit; }
 .wechat-tool-options { position: absolute; left: 0; top: calc(100% + 6px); display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 10px; border-radius: 7px; background: #fff; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.2); }
 .wechat-tool-options__color { width: 18px; height: 18px; border: 2px solid #fff; border-radius: 50%; background: #ff4d4f; box-shadow: 0 0 0 1px #c6c9cc; }
 .wechat-tool-options input { width: 76px; accent-color: #08c878; }
+.emoji-picker { position: absolute; left: 64px; top: calc(100% + 6px); display: grid; grid-template-columns: repeat(6, 30px); gap: 4px; padding: 8px; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 7px; background: #fff; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.2); }
+.emoji-picker button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; font-size: 19px; cursor: pointer; }
+.emoji-picker button:hover { background: #eef0f1; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .text-editor { position: absolute; z-index: 6; min-width: 120px; min-height: 32px; padding: 4px 6px; overflow: hidden; resize: none; border: 1px solid #63ccef; border-radius: 4px; outline: none; background: rgba(13, 17, 20, 0.82); color: #ff3b30; font: 18px/1.35 sans-serif; }
