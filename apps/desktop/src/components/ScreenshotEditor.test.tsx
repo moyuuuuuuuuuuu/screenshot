@@ -13,8 +13,12 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     startLongCapture: vi.fn().mockResolvedValue({
       png: new Blob(['long-png'], { type: 'image/png' }),
       partial: false,
+      action: 'edit',
     }),
     stopLongCapture: vi.fn().mockResolvedValue(undefined),
+    editLongCapture: vi.fn().mockResolvedValue(undefined),
+    saveLongCapture: vi.fn().mockResolvedValue(undefined),
+    finishLongCapture: vi.fn().mockResolvedValue(undefined),
     cancelLongCapture: vi.fn().mockResolvedValue(undefined),
     getLongCaptureProgress: vi.fn(),
     loadSettings: vi.fn().mockResolvedValue({ shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } }),
@@ -235,11 +239,11 @@ describe('ScreenshotEditor', () => {
 
   it('keeps progress in the separate controls window and Esc stops without closing the overlay', async () => {
     let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
-    let finishCapture: ((result: { png: Blob; partial: boolean }) => void) | undefined;
+    let finishCapture: ((result: { png: Blob; partial: boolean; action: 'edit' }) => void) | undefined;
     const bridge = createBridge({
       startLongCapture: vi.fn((_region, onProgress) => {
         reportProgress = onProgress;
-        return new Promise<{ png: Blob; partial: boolean }>((resolve) => { finishCapture = resolve; });
+        return new Promise<{ png: Blob; partial: boolean; action: 'edit' }>((resolve) => { finishCapture = resolve; });
       }),
     });
     render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
@@ -254,14 +258,17 @@ describe('ScreenshotEditor', () => {
       stitchedHeight: 1240,
       state: 'matching',
       previewPngBytes: [],
+      navigatorPngBytes: [],
+      acceptedBounds: null,
       warning: false,
+      slowScrollWarning: false,
     });
     expect(screen.queryByRole('status', { name: '长截图进度' })).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
 
     expect(bridge.stopLongCapture).toHaveBeenCalledOnce();
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
-    finishCapture?.({ png: new Blob(['partial']), partial: true });
+    finishCapture?.({ png: new Blob(['partial']), partial: true, action: 'edit' });
   });
 
   it('shows the native long-capture failure reason', async () => {

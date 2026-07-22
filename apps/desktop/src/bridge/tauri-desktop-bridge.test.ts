@@ -35,7 +35,7 @@ describe('createTauriDesktopBridge', () => {
 
   it('starts and stops a long capture with typed PNG output', async () => {
     const invoke = vi.fn()
-      .mockResolvedValueOnce({ pngBytes: [1, 2, 3], partial: true })
+      .mockResolvedValueOnce({ pngBytes: [1, 2, 3], partial: true, action: 'edit' })
       .mockResolvedValueOnce(undefined);
     const bridge = createTauriDesktopBridge(invoke);
     const progress = vi.fn();
@@ -55,7 +55,10 @@ describe('createTauriDesktopBridge', () => {
       stitchedHeight: 0,
       state: 'preparing',
       previewPngBytes: [],
+      navigatorPngBytes: [],
+      acceptedBounds: null,
       warning: false,
+      slowScrollWarning: false,
     });
   });
 
@@ -65,7 +68,10 @@ describe('createTauriDesktopBridge', () => {
       stitchedHeight: 1600,
       state: 'observing',
       previewPngBytes: [1, 2, 3],
+      navigatorPngBytes: [1, 2, 3],
+      acceptedBounds: null,
       warning: false,
+      slowScrollWarning: false,
     } as const;
     const invoke = vi.fn().mockResolvedValue(progress);
     const bridge = createTauriDesktopBridge(invoke);

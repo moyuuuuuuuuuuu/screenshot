@@ -24,6 +24,9 @@ export function createBrowserDesktopBridge(
       throw new Error('Long capture requires the desktop application');
     },
     async stopLongCapture() {},
+    async editLongCapture() {},
+    async saveLongCapture() {},
+    async finishLongCapture() {},
     async cancelLongCapture() {},
     async getLongCaptureProgress() {
       return {
@@ -31,7 +34,10 @@ export function createBrowserDesktopBridge(
         stitchedHeight: 0,
         state: 'failed',
         previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
         warning: true,
+        slowScrollWarning: false,
       };
     },
     async loadSettings() {

@@ -74,9 +74,10 @@ impl ScrollMotionTracker {
 
     pub fn expected_overlap(&self) -> Option<RangeInclusive<u32>> {
         let dy = self.last_forward_dy?;
+        let accumulated = u32::try_from(self.accumulated_offset).unwrap_or(u32::MAX);
         let center = self
             .height
-            .saturating_sub(dy)
+            .saturating_sub(accumulated)
             .clamp(1, self.height.saturating_sub(1));
         let tolerance = (dy / 2 + 2).max(3);
         Some(

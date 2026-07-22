@@ -46,9 +46,10 @@ fn tracks_continuous_three_to_twenty_pixel_steps_and_acceleration() {
     assert_eq!(forward_dy(tracker.observe(&document_frame(3, 0))), 3);
     assert_eq!(forward_dy(tracker.observe(&document_frame(10, 0))), 7);
     assert_eq!(forward_dy(tracker.observe(&document_frame(30, 0))), 20);
+    assert_eq!(tracker.accumulated_offset(), 30);
     assert!(tracker
         .expected_overlap()
-        .is_some_and(|range| range.contains(&44)));
+        .is_some_and(|range| range.contains(&34)));
 }
 
 #[test]

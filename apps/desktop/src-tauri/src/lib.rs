@@ -6,6 +6,7 @@ pub mod long_capture;
 pub mod output;
 pub mod pin_window;
 mod platform;
+pub mod preview_windows;
 pub mod region_observer;
 pub mod scroll_controller;
 pub mod scroll_motion_tracker;

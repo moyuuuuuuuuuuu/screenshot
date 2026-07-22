@@ -6,12 +6,16 @@ export type LongCaptureProgress = Readonly<{
   state: 'preparing' | 'observing' | 'scrolling' | 'stabilizing' | 'matching'
     | 'pausedReverse' | 'warning' | 'completed' | 'partial' | 'cancelled' | 'failed';
   previewPngBytes: readonly number[];
+  navigatorPngBytes: readonly number[];
+  acceptedBounds: Rect | null;
   warning: boolean;
+  slowScrollWarning: boolean;
 }>;
 
 export type LongCaptureResult = Readonly<{
   png: Blob;
   partial: boolean;
+  action: 'edit' | 'save' | 'finish';
 }>;
 
 export type AppSettings = Readonly<{
@@ -33,6 +37,9 @@ export interface DesktopBridge {
     onProgress: (progress: LongCaptureProgress) => void,
   ): Promise<LongCaptureResult>;
   stopLongCapture(): Promise<void>;
+  editLongCapture(): Promise<void>;
+  saveLongCapture(): Promise<void>;
+  finishLongCapture(): Promise<void>;
   cancelLongCapture(): Promise<void>;
   getLongCaptureProgress(): Promise<LongCaptureProgress>;
   loadSettings(): Promise<AppSettings>;

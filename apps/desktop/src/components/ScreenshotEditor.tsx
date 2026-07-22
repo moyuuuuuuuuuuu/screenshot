@@ -277,10 +277,23 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       stitchedHeight: 0,
       state: 'preparing',
       previewPngBytes: [],
+      navigatorPngBytes: [],
+      acceptedBounds: null,
       warning: false,
+      slowScrollWarning: false,
     });
     try {
       const result = await bridge.startLongCapture(selection, setLongCaptureProgress);
+      if (result.action === 'save') {
+        const savedPath = await bridge.savePng(result.png, screenshotName());
+        if (savedPath) await bridge.closeOverlay();
+        return;
+      }
+      if (result.action === 'finish') {
+        await bridge.copyPng(result.png);
+        await bridge.closeOverlay();
+        return;
+      }
       if (generatedSourceUrl.current) URL.revokeObjectURL(generatedSourceUrl.current);
       const resultUrl = URL.createObjectURL(result.png);
       generatedSourceUrl.current = resultUrl;
@@ -291,6 +304,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       if (result.partial) setError('长截图已停止，已保留部分结果');
     } catch (captureError) {
       dispatchCapture({ type: 'scrollCancelled' });
+      if (errorMessage(captureError).toLowerCase().includes('cancelled')) return;
       console.error('Long capture failed', captureError);
       setError(`长截图失败：${errorMessage(captureError)}`);
     } finally {

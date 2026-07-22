@@ -20,7 +20,9 @@ function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
     || typeof progress.stitchedHeight !== 'number'
     || !progressStates.has(progress.state as LongCaptureProgress['state'])
     || !Array.isArray(progress.previewPngBytes)
+    || !Array.isArray(progress.navigatorPngBytes)
     || typeof progress.warning !== 'boolean'
+    || typeof progress.slowScrollWarning !== 'boolean'
   ) throw new Error('invalid long capture progress');
   return progress as LongCaptureProgress;
 }
@@ -73,7 +75,10 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
         stitchedHeight: 0,
         state: 'preparing',
         previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
         warning: false,
+        slowScrollWarning: false,
       });
       const progressTimer = window.setInterval(() => {
         void invoke('long_capture_progress').then((value) => {
@@ -87,18 +92,24 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
         window.clearInterval(progressTimer);
       }
       if (!value || typeof value !== 'object') throw new Error('invalid long capture result');
-      const result = value as { pngBytes?: unknown; partial?: unknown };
-      if (!Array.isArray(result.pngBytes) || typeof result.partial !== 'boolean') {
+      const result = value as { pngBytes?: unknown; partial?: unknown; action?: unknown };
+      const action = result.action ?? 'edit';
+      if (!Array.isArray(result.pngBytes) || typeof result.partial !== 'boolean'
+        || !['edit', 'save', 'finish'].includes(action as string)) {
         throw new Error('invalid long capture result');
       }
       return {
         png: new Blob([new Uint8Array(result.pngBytes as number[])], { type: 'image/png' }),
         partial: result.partial,
+        action: action as LongCaptureResult['action'],
       } satisfies LongCaptureResult;
     },
     async stopLongCapture() {
       await invoke('stop_long_capture');
     },
+    async editLongCapture() { await invoke('edit_long_capture'); },
+    async saveLongCapture() { await invoke('save_long_capture'); },
+    async finishLongCapture() { await invoke('finish_long_capture'); },
     async cancelLongCapture() {
       await invoke('cancel_long_capture');
     },

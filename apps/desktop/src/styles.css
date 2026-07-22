@@ -106,6 +106,20 @@ button { font: inherit; }
 .pin-window { position: relative; width: 100vw; height: 100vh; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.18); background: transparent; }
 .pin-window img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; cursor: move; }
 .pin-window button { position: absolute; top: 7px; right: 7px; display: none; width: 25px; height: 25px; padding: 0; border: 0; border-radius: 50%; background: rgba(25, 25, 25, 0.72); color: #fff; font-size: 18px; cursor: pointer; }
+.scroll-preview { position: relative; display: grid; width: 100vw; height: 100vh; grid-template-columns: minmax(0, 1fr) 148px; gap: 12px; padding: 2px 2px 54px; background: transparent; }
+.scroll-preview[data-side="left"] { grid-template-columns: 148px minmax(0, 1fr); }
+.scroll-preview[data-side="left"] .scroll-preview__stage { grid-column: 2; }
+.scroll-preview[data-side="left"] .scroll-preview__rail { grid-column: 1; grid-row: 1; }
+.scroll-preview__stage { position: relative; display: grid; min-width: 0; overflow: hidden; border: 1px solid #07c160; background: #fff; }
+.scroll-preview__image { width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+.scroll-preview__prompt { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 5px 10px; border-radius: 4px; background: rgba(25, 25, 25, .72); color: #fff; font-size: 12px; white-space: nowrap; }
+.scroll-preview__rail { display: grid; min-height: 0; padding: 5px; place-items: end center; border-radius: 4px; background: rgba(25, 25, 25, .82); }
+.scroll-preview__navigator { width: 100%; max-height: 100%; object-fit: contain; object-position: center bottom; }
+.scroll-preview__actions { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; }
+.scroll-preview__actions button { display: grid; width: 36px; height: 36px; padding: 8px; place-items: center; border: 0; border-radius: 6px; background: #fff; color: #42464a; box-shadow: 0 3px 12px rgba(0,0,0,.2); cursor: pointer; }
+.scroll-preview__actions button:last-child { color: #07c160; }
+.scroll-preview__actions svg { width: 20px; height: 20px; }
+.scroll-preview__warning { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 10px; border-radius: 4px; background: rgba(25,25,25,.78); color: #fff; font-size: 12px; }
 .pin-window:hover button, .pin-window button:focus-visible { display: grid; place-items: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -113,16 +127,3 @@ button { font: inherit; }
 
 .editor-alert { position: absolute; left: 50%; bottom: 28px; z-index: 10; transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }
 .capture-error { position: absolute; left: 50%; top: 28px; z-index: 11; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); padding: 10px 16px; border: 1px solid #783f46; border-radius: 8px; background: #3b2025; color: #ffd9dd; font-size: 13px; }
-
-.long-capture-controls { display: flex; width: 100vw; height: 100vh; padding: 8px; flex-direction: column; gap: 8px; border: 1px solid #303740; border-radius: 12px; background: #171b20; box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45); }
-.long-capture-controls--warning { border-color: #d39443; }
-.long-capture-controls__preview { position: relative; display: grid; min-height: 0; flex: 1; place-items: center; overflow: hidden; border-radius: 7px; background: #0e1114; }
-.long-capture-controls__preview img { width: 100%; height: 100%; object-fit: cover; object-position: bottom; }
-.long-capture-controls__warning { position: absolute; top: 6px; right: 6px; display: grid; width: 28px; height: 28px; place-items: center; border-radius: 7px; color: #ffc46b; background: rgba(61, 39, 15, 0.92); }
-.long-capture-controls__warning svg { width: 20px; height: 20px; }
-.long-capture-controls__actions { display: flex; justify-content: center; gap: 8px; }
-.long-capture-controls__button { display: grid; width: 36px; height: 36px; padding: 8px; place-items: center; border: 0; border-radius: 7px; background: #252b32; cursor: pointer; }
-.long-capture-controls__button svg { width: 20px; height: 20px; stroke-linecap: round; stroke-linejoin: round; }
-.long-capture-controls__button--stop { color: #5cda98; }
-.long-capture-controls__button--cancel { color: #ff7373; }
-.long-capture-controls__button:hover { background: #303740; }

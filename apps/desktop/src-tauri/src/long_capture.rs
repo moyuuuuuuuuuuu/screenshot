@@ -1,22 +1,24 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
     Mutex,
 };
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
+use crate::preview_windows::{open_preview_window, ScreenRect};
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
+use crate::scroll_motion_tracker::{MotionEstimate, ScrollMotionTracker};
 use crate::static_region_detector::detect_static_regions;
 use crate::stitcher::{
-    classify_scroll_direction, downscale_grayscale, ChunkedStitcher, MatchDirection, RgbaFrame,
+    downscale_grayscale, find_vertical_overlap_in_range, ChunkedStitcher, RgbaFrame,
 };
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureRegion {
     x: f64,
@@ -43,7 +45,44 @@ pub struct LongCaptureProgress {
     stitched_height: u32,
     state: &'static str,
     preview_png_bytes: Vec<u8>,
+    navigator_png_bytes: Vec<u8>,
+    accepted_bounds: Option<AcceptedBounds>,
     warning: bool,
+    slow_scroll_warning: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceptedBounds {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LongCaptureAction {
+    None,
+    Edit,
+    Save,
+    Cancel,
+    Finish,
+}
+
+impl LongCaptureAction {
+    fn code(self) -> u8 {
+        self as u8
+    }
+    fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Edit,
+            2 => Self::Save,
+            3 => Self::Cancel,
+            4 => Self::Finish,
+            _ => Self::None,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -51,6 +90,7 @@ pub struct LongCaptureProgress {
 pub struct LongCaptureResult {
     png_bytes: Vec<u8>,
     partial: bool,
+    action: LongCaptureAction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +152,7 @@ pub struct LongCaptureRuntime {
     stop_requested: AtomicBool,
     cancel_requested: AtomicBool,
     progress: Mutex<LongCaptureProgress>,
+    action: AtomicU8,
 }
 
 impl Default for LongCaptureRuntime {
@@ -121,6 +162,7 @@ impl Default for LongCaptureRuntime {
             stop_requested: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
             progress: Mutex::new(LongCaptureProgress::default()),
+            action: AtomicU8::new(LongCaptureAction::None.code()),
         }
     }
 }
@@ -132,7 +174,9 @@ impl LongCaptureRuntime {
             .map_err(|_| "a long capture is already running".to_string())?;
         self.stop_requested.store(false, Ordering::Release);
         self.cancel_requested.store(false, Ordering::Release);
-        self.update(0, 0, "preparing", Vec::new(), false);
+        self.action
+            .store(LongCaptureAction::None.code(), Ordering::Release);
+        self.update(0, 0, "preparing", Vec::new(), false, 0);
         Ok(())
     }
 
@@ -147,14 +191,23 @@ impl LongCaptureRuntime {
         state: &'static str,
         preview_png_bytes: Vec<u8>,
         warning: bool,
+        width: u32,
     ) {
         if let Ok(mut progress) = self.progress.lock() {
             *progress = LongCaptureProgress {
                 frame_count,
                 stitched_height,
                 state,
+                navigator_png_bytes: preview_png_bytes.clone(),
+                accepted_bounds: (width > 0).then_some(AcceptedBounds {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height: stitched_height,
+                }),
                 preview_png_bytes,
                 warning,
+                slow_scroll_warning: warning,
             };
         }
     }
@@ -164,7 +217,28 @@ impl LongCaptureRuntime {
     }
 
     pub fn request_cancel(&self) {
+        self.action
+            .store(LongCaptureAction::Cancel.code(), Ordering::Release);
         self.cancel_requested.store(true, Ordering::Release);
+    }
+
+    pub fn request_edit(&self) {
+        self.action
+            .store(LongCaptureAction::Edit.code(), Ordering::Release);
+        self.request_stop();
+    }
+    pub fn request_save(&self) {
+        self.action
+            .store(LongCaptureAction::Save.code(), Ordering::Release);
+        self.request_stop();
+    }
+    pub fn request_finish(&self) {
+        self.action
+            .store(LongCaptureAction::Finish.code(), Ordering::Release);
+        self.request_stop();
+    }
+    fn requested_action(&self) -> LongCaptureAction {
+        LongCaptureAction::from_code(self.action.load(Ordering::Acquire))
     }
 }
 
@@ -233,7 +307,12 @@ fn session_state_name(state: LongCaptureState) -> &'static str {
     }
 }
 
-fn publish_progress(runtime: &LongCaptureRuntime, session: &LongCaptureSession, preview: &[u8]) {
+fn publish_progress(
+    runtime: &LongCaptureRuntime,
+    session: &LongCaptureSession,
+    preview: &[u8],
+    width: u32,
+) {
     let warning = matches!(
         session.state(),
         LongCaptureState::PausedReverse | LongCaptureState::Warning
@@ -244,26 +323,12 @@ fn publish_progress(runtime: &LongCaptureRuntime, session: &LongCaptureSession, 
         session_state_name(session.state()),
         preview.to_vec(),
         warning,
+        width,
     );
 }
 
-fn control_window_x(
-    selection_x: i32,
-    selection_width: i32,
-    monitor_x: i32,
-    monitor_width: i32,
-    controls_width: i32,
-) -> i32 {
-    let right = selection_x + selection_width + 12;
-    if right + controls_width <= monitor_x + monitor_width {
-        right
-    } else {
-        (selection_x - controls_width - 12).max(monitor_x + 8)
-    }
-}
-
 fn open_controls_window(app: &tauri::AppHandle, region: CaptureRegion) -> Result<(), String> {
-    if let Some(existing) = app.get_webview_window("long-capture-controls") {
+    if let Some(existing) = app.get_webview_window("scroll-capture-preview") {
         let _ = existing.close();
     }
     let frames = platform::capture_monitors()?;
@@ -278,35 +343,21 @@ fn open_controls_window(app: &tauri::AppHandle, region: CaptureRegion) -> Result
                 && center_y < frame.y + frame.height as i32
         })
         .ok_or_else(|| "cannot place long-capture controls outside the selection".to_string())?;
-    let width = 148_i32;
-    let height = 280_i32.min(monitor.height as i32 - 16).max(120);
-    let x = control_window_x(
-        region.x.round() as i32,
-        region.width.round() as i32,
-        monitor.x,
-        monitor.width as i32,
-        width,
-    );
-    let y = (region.y.round() as i32)
-        .max(monitor.y + 8)
-        .min(monitor.y + monitor.height as i32 - height - 8);
-    WebviewWindowBuilder::new(
+    open_preview_window(
         app,
-        "long-capture-controls",
-        WebviewUrl::App("index.html?window=long-capture-controls".into()),
+        ScreenRect {
+            x: region.x.round() as i32,
+            y: region.y.round() as i32,
+            width: region.width.round() as i32,
+            height: region.height.round() as i32,
+        },
+        ScreenRect {
+            x: monitor.x,
+            y: monitor.y,
+            width: monitor.width as i32,
+            height: monitor.height as i32,
+        },
     )
-    .title("长截图")
-    .inner_size(width as f64, height as f64)
-    .position(x as f64, y as f64)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .shadow(false)
-    .build()
-    .map_err(|error| format!("failed to open long-capture controls: {error}"))?;
-    Ok(())
 }
 
 fn run_capture(
@@ -328,6 +379,12 @@ fn run_capture(
     let first_gray = downscale_grayscale(&first, 8)
         .map_err(|error| format!("observation preparation failed: {error:?}"))?;
     observer.observe(&first_gray.pixels, Duration::ZERO);
+    let first_motion_gray = downscale_grayscale(&first, 4)
+        .map_err(|error| format!("motion preparation failed: {error:?}"))?;
+    let mut motion_tracker =
+        ScrollMotionTracker::new(first_motion_gray.width, first_motion_gray.height);
+    motion_tracker.observe(&first_motion_gray);
+    let mut pending_motion = MotionEstimate::Stationary;
     stitcher
         .append(first.clone(), 0)
         .map_err(|error| format!("stitch failed: {error:?}"))?;
@@ -336,7 +393,7 @@ fn run_capture(
         .map_err(|_| "failed to accept first long-capture frame")?;
     let mut accepted_tail = first;
     let mut preview_png = encode_png(&accepted_tail)?;
-    publish_progress(runtime, &session, &preview_png);
+    publish_progress(runtime, &session, &preview_png, accepted_tail.width);
 
     loop {
         if runtime.cancel_requested.load(Ordering::Acquire) {
@@ -350,11 +407,20 @@ fn run_capture(
         if let Err(SessionError::ResourceLimit) = session.check_limits(started.elapsed()) {
             break;
         }
-        platform::validate_capture_target(target)?;
+        if platform::validate_capture_target(target).is_err() {
+            session.fail();
+            break;
+        }
 
         let candidate = crop_region(platform::capture_monitors()?, region)?;
         let candidate_gray = downscale_grayscale(&candidate, 8)
             .map_err(|error| format!("observation preparation failed: {error:?}"))?;
+        let candidate_motion_gray = downscale_grayscale(&candidate, 4)
+            .map_err(|error| format!("motion preparation failed: {error:?}"))?;
+        let estimate = motion_tracker.observe(&candidate_motion_gray);
+        if !matches!(estimate, MotionEstimate::Stationary) {
+            pending_motion = estimate;
+        }
         match observer.observe(&candidate_gray.pixels, started.elapsed()) {
             Observation::MotionStarted => {
                 session
@@ -367,17 +433,25 @@ fn run_capture(
                     .map_err(|_| "invalid stable-frame transition")?;
                 let previous_gray = downscale_grayscale(&accepted_tail, 4)
                     .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
-                let next_gray = downscale_grayscale(&candidate, 4)
-                    .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
-                let minimum = (previous_gray.height / 5)
-                    .max(1)
-                    .min(previous_gray.height.saturating_sub(1));
-                match classify_scroll_direction(&previous_gray, &next_gray, minimum) {
-                    MatchDirection::Forward { overlap_rows } => {
+                let next_gray = candidate_motion_gray;
+                match pending_motion {
+                    MotionEstimate::Forward { .. } => {
+                        let range = motion_tracker
+                            .expected_overlap()
+                            .ok_or("missing motion overlap")?;
+                        let overlap_rows = find_vertical_overlap_in_range(
+                            &previous_gray,
+                            &next_gray,
+                            range,
+                            2.0,
+                            0.72,
+                        )
+                        .map_err(|error| format!("motion-constrained match failed: {error:?}"))?
+                        .overlap_rows;
                         let overlap_rows =
                             (overlap_rows * 4).min(candidate.height.saturating_sub(1));
                         let static_regions =
-                            detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2)
+                            detect_static_regions(&[previous_gray, next_gray.clone()], 2, 0.9, 2)
                                 .unwrap_or_default();
                         stitcher
                             .append_with_static_regions(
@@ -393,6 +467,10 @@ fn run_capture(
                             .forward_matched(candidate.height - overlap_rows)
                             .map_err(|_| "invalid forward-match transition")?;
                         accepted_tail = candidate;
+                        motion_tracker =
+                            ScrollMotionTracker::new(next_gray.width, next_gray.height);
+                        motion_tracker.observe(&next_gray);
+                        pending_motion = MotionEstimate::Stationary;
                         preview_png = encode_png(
                             &stitcher
                                 .preview()
@@ -400,12 +478,14 @@ fn run_capture(
                         )?;
                         observer.mark_appended(started.elapsed());
                     }
-                    MatchDirection::Reverse => session
+                    MotionEstimate::Reverse { .. } => session
                         .reverse_detected()
                         .map_err(|_| "invalid reverse-match transition")?,
-                    MatchDirection::Unmatched => session
-                        .unmatched()
-                        .map_err(|_| "invalid unmatched transition")?,
+                    MotionEstimate::Uncertain | MotionEstimate::Stationary => {
+                        session
+                            .unmatched()
+                            .map_err(|_| "invalid unmatched transition")?
+                    }
                 }
             }
             Observation::IdleComplete => {
@@ -416,7 +496,7 @@ fn run_capture(
             }
             Observation::Unchanged | Observation::Stabilizing => {}
         }
-        publish_progress(runtime, &session, &preview_png);
+        publish_progress(runtime, &session, &preview_png, accepted_tail.width);
         std::thread::sleep(SAMPLE_INTERVAL);
     }
 
@@ -435,6 +515,11 @@ fn run_capture(
     Ok(LongCaptureResult {
         png_bytes: encode_png(&output)?,
         partial: outcome == CaptureTermination::Partial,
+        action: match runtime.requested_action() {
+            LongCaptureAction::Save => LongCaptureAction::Save,
+            LongCaptureAction::Finish => LongCaptureAction::Finish,
+            _ => LongCaptureAction::Edit,
+        },
     })
 }
 
@@ -460,7 +545,7 @@ pub async fn start_long_capture(
                 let _ = restore_window.set_focus();
             },
             move || {
-                if let Some(controls) = close_app.get_webview_window("long-capture-controls") {
+                if let Some(controls) = close_app.get_webview_window("scroll-capture-preview") {
                     let _ = controls.close();
                 }
             },
@@ -492,7 +577,22 @@ pub async fn start_long_capture(
 
 #[tauri::command]
 pub fn stop_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.request_stop();
+    runtime.request_finish();
+}
+
+#[tauri::command]
+pub fn edit_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
+    runtime.request_edit();
+}
+
+#[tauri::command]
+pub fn save_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
+    runtime.request_save();
+}
+
+#[tauri::command]
+pub fn finish_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
+    runtime.request_finish();
 }
 
 #[tauri::command]
@@ -516,6 +616,19 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     #[test]
+    fn edit_save_cancel_and_finish_are_distinct_runtime_actions() {
+        let runtime = super::LongCaptureRuntime::default();
+        runtime.request_edit();
+        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Edit);
+        runtime.request_save();
+        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Save);
+        runtime.request_cancel();
+        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Cancel);
+        runtime.request_finish();
+        assert_eq!(runtime.requested_action(), super::LongCaptureAction::Finish);
+    }
+
+    #[test]
     fn cancel_discards_output_while_stop_keeps_it() {
         assert_eq!(termination(true, false, 3), CaptureTermination::Cancelled);
         assert_eq!(termination(false, true, 3), CaptureTermination::Partial);
@@ -536,12 +649,6 @@ mod tests {
         }
         assert_eq!(restored.get(), 1);
         assert_eq!(closed.get(), 1);
-    }
-
-    #[test]
-    fn controls_prefer_the_right_side_and_fall_back_to_the_left() {
-        assert_eq!(super::control_window_x(100, 300, 0, 1920, 148), 412);
-        assert_eq!(super::control_window_x(1800, 100, 0, 1920, 148), 1640);
     }
 
     #[test]
