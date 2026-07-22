@@ -5,14 +5,16 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-use crate::frame_stability::{FrameStabilitySampler, StabilityObservation};
 use crate::platform::{self, RawMonitorFrame};
+use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::static_region_detector::detect_static_regions;
-use crate::stitcher::{downscale_grayscale, find_vertical_overlap, ChunkedStitcher, RgbaFrame};
+use crate::stitcher::{
+    classify_scroll_direction, downscale_grayscale, ChunkedStitcher, MatchDirection, RgbaFrame,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +42,8 @@ pub struct LongCaptureProgress {
     frame_count: u32,
     stitched_height: u32,
     state: &'static str,
+    preview_png_bytes: Vec<u8>,
+    warning: bool,
 }
 
 #[derive(Serialize)]
@@ -49,9 +53,64 @@ pub struct LongCaptureResult {
     partial: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureTermination {
+    Cancelled,
+    Partial,
+    Completed,
+}
+
+fn termination(cancel: bool, stop: bool, accepted_frames: u32) -> CaptureTermination {
+    if cancel || accepted_frames == 0 {
+        CaptureTermination::Cancelled
+    } else if stop {
+        CaptureTermination::Partial
+    } else {
+        CaptureTermination::Completed
+    }
+}
+
+struct CaptureCleanup<Restore, Close>
+where
+    Restore: FnOnce(),
+    Close: FnOnce(),
+{
+    restore_overlay: Option<Restore>,
+    close_controls: Option<Close>,
+}
+
+impl<Restore, Close> CaptureCleanup<Restore, Close>
+where
+    Restore: FnOnce(),
+    Close: FnOnce(),
+{
+    fn new(restore_overlay: Restore, close_controls: Close) -> Self {
+        Self {
+            restore_overlay: Some(restore_overlay),
+            close_controls: Some(close_controls),
+        }
+    }
+}
+
+impl<Restore, Close> Drop for CaptureCleanup<Restore, Close>
+where
+    Restore: FnOnce(),
+    Close: FnOnce(),
+{
+    fn drop(&mut self) {
+        if let Some(restore) = self.restore_overlay.take() {
+            restore();
+        }
+        if let Some(close) = self.close_controls.take() {
+            close();
+        }
+    }
+}
+
 pub struct LongCaptureRuntime {
     active: AtomicBool,
     stop_requested: AtomicBool,
+    cancel_requested: AtomicBool,
     progress: Mutex<LongCaptureProgress>,
 }
 
@@ -60,6 +119,7 @@ impl Default for LongCaptureRuntime {
         Self {
             active: AtomicBool::new(false),
             stop_requested: AtomicBool::new(false),
+            cancel_requested: AtomicBool::new(false),
             progress: Mutex::new(LongCaptureProgress::default()),
         }
     }
@@ -71,7 +131,8 @@ impl LongCaptureRuntime {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "a long capture is already running".to_string())?;
         self.stop_requested.store(false, Ordering::Release);
-        self.update(0, 0, "preparing");
+        self.cancel_requested.store(false, Ordering::Release);
+        self.update(0, 0, "preparing", Vec::new(), false);
         Ok(())
     }
 
@@ -79,18 +140,31 @@ impl LongCaptureRuntime {
         self.active.store(false, Ordering::Release);
     }
 
-    fn update(&self, frame_count: u32, stitched_height: u32, state: &'static str) {
+    fn update(
+        &self,
+        frame_count: u32,
+        stitched_height: u32,
+        state: &'static str,
+        preview_png_bytes: Vec<u8>,
+        warning: bool,
+    ) {
         if let Ok(mut progress) = self.progress.lock() {
             *progress = LongCaptureProgress {
                 frame_count,
                 stitched_height,
                 state,
+                preview_png_bytes,
+                warning,
             };
         }
     }
 
     pub fn request_stop(&self) {
         self.stop_requested.store(true, Ordering::Release);
+    }
+
+    pub fn request_cancel(&self) {
+        self.cancel_requested.store(true, Ordering::Release);
     }
 }
 
@@ -129,7 +203,7 @@ fn crop_region(frames: Vec<RawMonitorFrame>, region: CaptureRegion) -> Result<Rg
     })
 }
 
-fn encode_png(frame: RgbaFrame) -> Result<Vec<u8>, String> {
+fn encode_png(frame: &RgbaFrame) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut bytes, frame.width, frame.height);
@@ -143,27 +217,34 @@ fn encode_png(frame: RgbaFrame) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn wait_for_stable_frame(
-    runtime: &LongCaptureRuntime,
-    region: CaptureRegion,
-) -> Result<RgbaFrame, String> {
-    let mut sampler = FrameStabilitySampler::new(2, 0.01);
-    for _ in 0..20 {
-        if runtime.stop_requested.load(Ordering::Acquire) {
-            return Err("long capture stopped".to_string());
-        }
-        let frame = crop_region(platform::capture_monitors()?, region)?;
-        let gray = downscale_grayscale(&frame, 8)
-            .map_err(|error| format!("stability sampling failed: {error:?}"))?;
-        if matches!(
-            sampler.observe(&gray.pixels),
-            Ok(StabilityObservation::Stable { .. })
-        ) {
-            return Ok(frame);
-        }
-        std::thread::sleep(Duration::from_millis(40));
+fn session_state_name(state: LongCaptureState) -> &'static str {
+    match state {
+        LongCaptureState::Preparing => "preparing",
+        LongCaptureState::Observing => "observing",
+        LongCaptureState::Scrolling => "scrolling",
+        LongCaptureState::Matching => "matching",
+        LongCaptureState::PausedReverse => "pausedReverse",
+        LongCaptureState::Warning => "warning",
+        LongCaptureState::Completed => "completed",
+        LongCaptureState::Partial => "partial",
+        LongCaptureState::Cancelled => "cancelled",
+        LongCaptureState::Failed => "failed",
+        LongCaptureState::Idle | LongCaptureState::Stabilizing => "observing",
     }
-    Err("scrolling content did not become stable".to_string())
+}
+
+fn publish_progress(runtime: &LongCaptureRuntime, session: &LongCaptureSession, preview: &[u8]) {
+    let warning = matches!(
+        session.state(),
+        LongCaptureState::PausedReverse | LongCaptureState::Warning
+    );
+    runtime.update(
+        session.frame_count(),
+        session.stitched_height(),
+        session_state_name(session.state()),
+        preview.to_vec(),
+        warning,
+    );
 }
 
 fn run_capture(
@@ -172,134 +253,122 @@ fn run_capture(
 ) -> Result<LongCaptureResult, String> {
     let target_x = (region.x + region.width / 2.0).round() as i32;
     let target_y = (region.y + region.height / 2.0).round() as i32;
-    let target = platform::track_scroll_target(target_x, target_y)?;
+    let target = platform::locate_capture_target(target_x, target_y)?;
     let started = Instant::now();
     let mut session = LongCaptureSession::default();
+    let mut observer = RegionObserver::new(0.01);
     let mut stitcher = ChunkedStitcher::default();
-    let mut previous: Option<RgbaFrame> = None;
-    let mut pending_frame: Option<RgbaFrame> = None;
     session
         .start()
         .map_err(|_| "failed to start long capture session")?;
 
+    let first = crop_region(platform::capture_monitors()?, region)?;
+    let first_gray = downscale_grayscale(&first, 8)
+        .map_err(|error| format!("observation preparation failed: {error:?}"))?;
+    observer.observe(&first_gray.pixels, Duration::ZERO);
+    stitcher
+        .append(first.clone(), 0)
+        .map_err(|error| format!("stitch failed: {error:?}"))?;
+    session
+        .accept_first_frame(first.height, started.elapsed())
+        .map_err(|_| "failed to accept first long-capture frame")?;
+    let mut accepted_tail = first;
+    let mut preview_png = encode_png(&accepted_tail)?;
+    publish_progress(runtime, &session, &preview_png);
+
     loop {
+        if runtime.cancel_requested.load(Ordering::Acquire) {
+            session.request_stop();
+            break;
+        }
         if runtime.stop_requested.load(Ordering::Acquire) {
             session.request_stop();
             break;
         }
-        match session.begin_capture(started.elapsed()) {
-            Ok(()) => {}
-            Err(SessionError::ResourceLimit) => break,
-            Err(SessionError::InvalidTransition) => {
-                return Err("invalid capture transition".to_string())
-            }
+        if let Err(SessionError::ResourceLimit) = session.check_limits(started.elapsed()) {
+            break;
         }
-        runtime.update(
-            session.frame_count(),
-            session.stitched_height(),
-            "capturing",
-        );
-        let frame = match pending_frame.take() {
-            Some(frame) => frame,
-            None => crop_region(platform::capture_monitors()?, region)?,
-        };
-        session
-            .frame_captured(frame.height)
-            .map_err(|_| "invalid capture transition")?;
+        platform::validate_capture_target(target)?;
 
-        if let Some(previous_frame) = previous.as_ref() {
-            runtime.update(session.frame_count(), session.stitched_height(), "matching");
-            if previous_frame.pixels == frame.pixels {
+        let candidate = crop_region(platform::capture_monitors()?, region)?;
+        let candidate_gray = downscale_grayscale(&candidate, 8)
+            .map_err(|error| format!("observation preparation failed: {error:?}"))?;
+        match observer.observe(&candidate_gray.pixels, started.elapsed()) {
+            Observation::MotionStarted => {
                 session
-                    .match_completed(0)
-                    .map_err(|_| "invalid match transition")?;
-            } else {
-                let previous_gray = downscale_grayscale(previous_frame, 4)
-                    .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
-                let next_gray = downscale_grayscale(&frame, 4)
-                    .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
-                let maximum = previous_gray.height.saturating_sub(1);
-                let minimum = (previous_gray.height / 5).max(1).min(maximum);
-                let overlap = match find_vertical_overlap(
-                    &previous_gray,
-                    &next_gray,
-                    minimum,
-                    maximum,
-                    2.0,
-                    0.75,
-                ) {
-                    Ok(overlap) => overlap,
-                    Err(_) => {
-                        session.fail();
-                        break;
-                    }
-                };
-                let overlap_rows = (overlap.overlap_rows * 4).min(frame.height.saturating_sub(1));
-                let static_regions = detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2)
-                    .unwrap_or_default();
-                stitcher
-                    .append_with_static_regions(
-                        frame.clone(),
-                        overlap_rows,
-                        static_regions.top_rows * 4,
-                        static_regions.bottom_rows * 4,
-                        static_regions.confidence,
-                        false,
-                    )
-                    .map_err(|error| format!("stitch failed: {error:?}"))?;
-                session
-                    .match_completed(frame.height - overlap_rows)
-                    .map_err(|_| "invalid match transition")?;
+                    .motion_started()
+                    .map_err(|_| "invalid motion transition")?;
             }
-        } else {
-            stitcher
-                .append(frame.clone(), 0)
-                .map_err(|error| format!("stitch failed: {error:?}"))?;
-        }
-        previous = Some(frame);
-        runtime.update(
-            session.frame_count(),
-            session.stitched_height(),
-            "scrolling",
-        );
-        if matches!(
-            session.state(),
-            LongCaptureState::Completed | LongCaptureState::Partial
-        ) {
-            break;
-        }
-        session
-            .scroll_sent()
-            .map_err(|_| "invalid scroll transition")?;
-        if platform::send_scroll(target, -480).is_err() {
-            session.fail();
-            break;
-        }
-        runtime.update(
-            session.frame_count(),
-            session.stitched_height(),
-            "stabilizing",
-        );
-        match wait_for_stable_frame(runtime, region) {
-            Ok(frame) => pending_frame = Some(frame),
-            Err(_) => {
-                session.fail();
+            Observation::StableFrame => {
+                session
+                    .stable_frame_ready()
+                    .map_err(|_| "invalid stable-frame transition")?;
+                let previous_gray = downscale_grayscale(&accepted_tail, 4)
+                    .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
+                let next_gray = downscale_grayscale(&candidate, 4)
+                    .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
+                let minimum = (previous_gray.height / 5)
+                    .max(1)
+                    .min(previous_gray.height.saturating_sub(1));
+                match classify_scroll_direction(&previous_gray, &next_gray, minimum) {
+                    MatchDirection::Forward { overlap_rows } => {
+                        let overlap_rows =
+                            (overlap_rows * 4).min(candidate.height.saturating_sub(1));
+                        let static_regions =
+                            detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2)
+                                .unwrap_or_default();
+                        stitcher
+                            .append_with_static_regions(
+                                candidate.clone(),
+                                overlap_rows,
+                                static_regions.top_rows * 4,
+                                static_regions.bottom_rows * 4,
+                                static_regions.confidence,
+                                false,
+                            )
+                            .map_err(|error| format!("stitch failed: {error:?}"))?;
+                        session
+                            .forward_matched(candidate.height - overlap_rows)
+                            .map_err(|_| "invalid forward-match transition")?;
+                        accepted_tail = candidate;
+                        preview_png = encode_png(&accepted_tail)?;
+                        observer.mark_appended(started.elapsed());
+                    }
+                    MatchDirection::Reverse => session
+                        .reverse_detected()
+                        .map_err(|_| "invalid reverse-match transition")?,
+                    MatchDirection::Unmatched => session
+                        .unmatched()
+                        .map_err(|_| "invalid unmatched transition")?,
+                }
+            }
+            Observation::IdleComplete => {
+                session
+                    .complete()
+                    .map_err(|_| "invalid completion transition")?;
                 break;
             }
+            Observation::Unchanged | Observation::Stabilizing => {}
         }
+        publish_progress(runtime, &session, &preview_png);
+        std::thread::sleep(SAMPLE_INTERVAL);
     }
 
-    let partial = matches!(
-        session.state(),
-        LongCaptureState::Partial | LongCaptureState::Failed
+    let outcome = termination(
+        runtime.cancel_requested.load(Ordering::Acquire),
+        runtime.stop_requested.load(Ordering::Acquire)
+            || matches!(session.state(), LongCaptureState::Partial),
+        session.frame_count(),
     );
+    if outcome == CaptureTermination::Cancelled {
+        return Err("long capture cancelled".to_string());
+    }
+    let output = stitcher
+        .finish()
+        .map_err(|error| format!("finish failed: {error:?}"))?;
     Ok(LongCaptureResult {
-        png_bytes: encode_png(
-            stitcher
-                .finish()
-                .map_err(|error| format!("finish failed: {error:?}"))?,
-        )?,
-        partial,
+        png_bytes: encode_png(&output)?,
+        partial: outcome == CaptureTermination::Partial,
     })
 }
 
@@ -310,30 +379,46 @@ pub async fn start_long_capture(
     region: CaptureRegion,
 ) -> Result<LongCaptureResult, String> {
     runtime.begin()?;
-    let Some(window) = app.get_webview_window("overlay") else {
-        runtime.finish();
-        return Err("overlay window is unavailable".to_string());
-    };
-    let origin = window
-        .outer_position()
-        .map_err(|error| format!("failed to read overlay position: {error}"))?;
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
-    let region = region.to_physical(origin.x, origin.y, scale_factor);
-    let escape_registered = app.global_shortcut().register("Escape").is_ok();
     let result = (|| {
+        let window = app
+            .get_webview_window("overlay")
+            .ok_or_else(|| "overlay window is unavailable".to_string())?;
+        let restore_window = window.clone();
+        let restore_app = app.clone();
+        let close_app = app.clone();
+        let _cleanup = CaptureCleanup::new(
+            move || {
+                let _ = restore_window.set_ignore_cursor_events(false);
+                let _ = restore_app.emit("long-capture-presentation", false);
+                let _ = restore_window.show();
+                let _ = restore_window.set_focus();
+            },
+            move || {
+                if let Some(controls) = close_app.get_webview_window("long-capture-controls") {
+                    let _ = controls.close();
+                }
+            },
+        );
+        let origin = window
+            .outer_position()
+            .map_err(|error| format!("failed to read overlay position: {error}"))?;
+        let scale_factor = window
+            .scale_factor()
+            .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
+        let region = region.to_physical(origin.x, origin.y, scale_factor);
+        let escape_registered = app.global_shortcut().register("Escape").is_ok();
+        app.emit("long-capture-presentation", true)
+            .map_err(|error| format!("failed to enter capture presentation: {error}"))?;
         window
-            .hide()
-            .map_err(|error| format!("failed to hide overlay: {error}"))?;
-        std::thread::sleep(Duration::from_millis(250));
-        run_capture(&runtime, region)
+            .set_ignore_cursor_events(true)
+            .map_err(|error| format!("failed to enable overlay pass-through: {error}"))?;
+        std::thread::sleep(Duration::from_millis(150));
+        let capture = run_capture(&runtime, region);
+        if escape_registered {
+            let _ = app.global_shortcut().unregister("Escape");
+        }
+        capture
     })();
-    let _ = window.show();
-    let _ = window.set_focus();
-    if escape_registered {
-        let _ = app.global_shortcut().unregister("Escape");
-    }
     runtime.finish();
     result
 }
@@ -341,6 +426,11 @@ pub async fn start_long_capture(
 #[tauri::command]
 pub fn stop_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
     runtime.request_stop();
+}
+
+#[tauri::command]
+pub fn cancel_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
+    runtime.request_cancel();
 }
 
 #[tauri::command]
@@ -354,8 +444,32 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 
 #[cfg(test)]
 mod tests {
-    use super::{crop_region, CaptureRegion};
+    use super::{crop_region, termination, CaptureCleanup, CaptureRegion, CaptureTermination};
     use crate::platform::RawMonitorFrame;
+    use std::{cell::Cell, rc::Rc};
+
+    #[test]
+    fn cancel_discards_output_while_stop_keeps_it() {
+        assert_eq!(termination(true, false, 3), CaptureTermination::Cancelled);
+        assert_eq!(termination(false, true, 3), CaptureTermination::Partial);
+        assert_eq!(termination(false, false, 3), CaptureTermination::Completed);
+    }
+
+    #[test]
+    fn cleanup_restores_overlay_and_closes_controls_once() {
+        let restored = Rc::new(Cell::new(0));
+        let closed = Rc::new(Cell::new(0));
+        {
+            let restored_count = Rc::clone(&restored);
+            let closed_count = Rc::clone(&closed);
+            let _cleanup = CaptureCleanup::new(
+                move || restored_count.set(restored_count.get() + 1),
+                move || closed_count.set(closed_count.get() + 1),
+            );
+        }
+        assert_eq!(restored.get(), 1);
+        assert_eq!(closed.get(), 1);
+    }
 
     #[test]
     fn crops_the_selected_pixels_from_a_monitor() {

@@ -11,32 +11,58 @@ pub struct RawMonitorFrame {
     pub rgba: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureTargetId(u64);
+
+impl CaptureTargetId {
+    pub fn new(value: u64) -> Result<Self, String> {
+        (value != 0)
+            .then_some(Self(value))
+            .ok_or_else(|| "capture target id must be non-zero".to_string())
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[cfg(windows)]
 pub fn capture_monitors() -> Result<Vec<RawMonitorFrame>, String> {
     windows::capture_monitors()
 }
 
 #[cfg(windows)]
-pub fn track_scroll_target(x: i32, y: i32) -> Result<u64, String> {
-    windows::track_scroll_target(x, y)
+pub fn locate_capture_target(x: i32, y: i32) -> Result<CaptureTargetId, String> {
+    windows::locate_capture_target(x, y)
 }
 
 #[cfg(not(windows))]
-pub fn track_scroll_target(_x: i32, _y: i32) -> Result<u64, String> {
-    Err("scroll target tracking is currently supported only on Windows".to_string())
+pub fn locate_capture_target(_x: i32, _y: i32) -> Result<CaptureTargetId, String> {
+    Err("capture target tracking is currently supported only on Windows".to_string())
 }
 
 #[cfg(windows)]
-pub fn send_scroll(target_id: u64, delta: i32) -> Result<(), String> {
-    windows::send_scroll(target_id, delta)
+pub fn validate_capture_target(target: CaptureTargetId) -> Result<(), String> {
+    windows::validate_capture_target(target)
 }
 
 #[cfg(not(windows))]
-pub fn send_scroll(_target_id: u64, _delta: i32) -> Result<(), String> {
-    Err("scroll input is currently supported only on Windows".to_string())
+pub fn validate_capture_target(_target: CaptureTargetId) -> Result<(), String> {
+    Err("capture target validation is currently supported only on Windows".to_string())
 }
 
 #[cfg(not(windows))]
 pub fn capture_monitors() -> Result<Vec<RawMonitorFrame>, String> {
     Err("desktop capture is currently supported only on Windows".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CaptureTargetId;
+
+    #[test]
+    fn capture_target_ids_must_be_non_zero() {
+        assert!(CaptureTargetId::new(0).is_err());
+        assert_eq!(CaptureTargetId::new(42).unwrap().get(), 42);
+    }
 }

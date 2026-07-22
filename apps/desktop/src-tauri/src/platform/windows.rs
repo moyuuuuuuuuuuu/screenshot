@@ -13,8 +13,8 @@ use windows_sys::Win32::{
 
 use super::RawMonitorFrame;
 
-mod scroll;
-pub use scroll::{send_scroll, track_scroll_target};
+mod target;
+pub use target::{locate_capture_target, validate_capture_target};
 
 #[derive(Clone, Copy)]
 struct MonitorDescriptor {

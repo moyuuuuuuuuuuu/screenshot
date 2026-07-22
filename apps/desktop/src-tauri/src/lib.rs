@@ -5,7 +5,6 @@ pub mod long_capture;
 pub mod output;
 mod platform;
 pub mod region_observer;
-pub mod scroll;
 pub mod scroll_controller;
 pub mod static_region_detector;
 pub mod stitcher;

@@ -9,7 +9,6 @@ pub enum LongCaptureState {
     #[default]
     Idle,
     Preparing,
-    Capturing,
     Observing,
     Scrolling,
     Stabilizing,
@@ -33,7 +32,6 @@ pub struct LongCaptureSession {
     state: LongCaptureState,
     frame_count: u32,
     stitched_height: u32,
-    consecutive_no_content: u8,
 }
 
 impl LongCaptureSession {
@@ -54,64 +52,6 @@ impl LongCaptureSession {
             return Err(SessionError::InvalidTransition);
         }
         self.state = LongCaptureState::Preparing;
-        Ok(())
-    }
-
-    pub fn begin_capture(&mut self, elapsed: Duration) -> Result<(), SessionError> {
-        if !matches!(
-            self.state,
-            LongCaptureState::Preparing | LongCaptureState::Stabilizing
-        ) {
-            return Err(SessionError::InvalidTransition);
-        }
-        if self.limit_reached(elapsed) {
-            self.finish_for_limit();
-            return Err(SessionError::ResourceLimit);
-        }
-        self.state = LongCaptureState::Capturing;
-        Ok(())
-    }
-
-    pub fn frame_captured(&mut self, frame_height: u32) -> Result<(), SessionError> {
-        if self.state != LongCaptureState::Capturing {
-            return Err(SessionError::InvalidTransition);
-        }
-        self.frame_count = self.frame_count.saturating_add(1);
-        if self.frame_count == 1 {
-            self.stitched_height = frame_height;
-            self.state = LongCaptureState::Observing;
-        } else {
-            self.state = LongCaptureState::Matching;
-        }
-        Ok(())
-    }
-
-    pub fn scroll_sent(&mut self) -> Result<(), SessionError> {
-        if self.state != LongCaptureState::Observing {
-            return Err(SessionError::InvalidTransition);
-        }
-        self.state = LongCaptureState::Stabilizing;
-        Ok(())
-    }
-
-    pub fn match_completed(&mut self, added_height: u32) -> Result<(), SessionError> {
-        if self.state != LongCaptureState::Matching {
-            return Err(SessionError::InvalidTransition);
-        }
-        self.stitched_height = self.stitched_height.saturating_add(added_height);
-        self.consecutive_no_content = if added_height == 0 {
-            self.consecutive_no_content.saturating_add(1)
-        } else {
-            0
-        };
-
-        if self.consecutive_no_content >= 2 {
-            self.state = LongCaptureState::Completed;
-        } else if self.stitched_height >= MAX_HEIGHT || self.frame_count >= MAX_FRAMES {
-            self.finish_for_limit();
-        } else {
-            self.state = LongCaptureState::Observing;
-        }
         Ok(())
     }
 
