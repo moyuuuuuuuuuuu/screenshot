@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
 import { ScreenshotEditor } from './ScreenshotEditor';
+import type { CozeService } from '../services/coze-service';
 
 function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   return {
@@ -162,6 +163,25 @@ describe('ScreenshotEditor', () => {
     });
 
     expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
+  });
+
+  it('preserves selection and annotations when OCR fails', async () => {
+    const cozeService: CozeService = {
+      ocr: vi.fn().mockRejectedValue(new Error('服务不可用')),
+      translate: vi.fn(),
+      redact: vi.fn(),
+    };
+    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} cozeService={cozeService} />);
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('服务不可用');
+    expect(screen.getByText('200 × 140')).toBeInTheDocument();
+    expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'annotating');
   });
 
   it('starts long capture for the selection and loads the result back into the editor', async () => {

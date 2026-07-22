@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
 import { captureSessionReducer, initialCaptureSession } from '../domain/capture-session';
 import {
@@ -21,10 +21,13 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { EmojiPicker } from './EmojiPicker';
 import { TextEditor } from './TextEditor';
 import { WechatToolbar, type WechatToolbarAction } from './WechatToolbar';
+import { ServiceResult } from './ServiceResult';
+import { createCozeService, type CozeService } from '../services/coze-service';
 
 type ScreenshotEditorProps = Readonly<{
   sourceUrl: string;
   bridge: DesktopBridge;
+  cozeService?: CozeService;
 }>;
 
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
@@ -47,7 +50,13 @@ function errorMessage(error: unknown): string {
   return '未知错误';
 }
 
-export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
+export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeService }: ScreenshotEditorProps) {
+  const cozeService = useMemo(
+    () => providedCozeService ?? createCozeService({
+      getConfig: async () => (await bridge.loadSettings()).coze,
+    }),
+    [bridge, providedCozeService],
+  );
   const [captureSession, dispatchCapture] = useReducer(
     captureSessionReducer,
     sourceUrl,
@@ -59,6 +68,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const [textPosition, setTextPosition] = useState<Point | null>(null);
   const [selectedEmoji, setSelectedEmoji] = useState('😊');
   const [error, setError] = useState<string | null>(null);
+  const [serviceResult, setServiceResult] = useState<{ title: string; text: string; translatable: boolean } | null>(null);
   const [drawingPreview, setDrawingPreview] = useState<DrawingSession | null>(null);
   const [penWidth, setPenWidth] = useState(4);
   const [mosaicWidth, setMosaicWidth] = useState(20);
@@ -73,6 +83,7 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
   const annotationSequence = useRef(0);
   const generatedSourceUrl = useRef<string | null>(null);
   const longCaptureSource = useRef<Blob | null>(null);
+  const serviceSource = useRef<Blob | null>(null);
   const toolbarPositioner = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -286,6 +297,59 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
     }
   }, [bridge, longCaptureProgress, selection]);
 
+  const runOcr = useCallback(async () => {
+    dispatchCapture({ type: 'serviceStarted', service: 'ocr' });
+    setError(null);
+    try {
+      const image = await exportSelection();
+      serviceSource.current = image;
+      const result = await cozeService.ocr(image);
+      setServiceResult({ title: '文字识别', text: result.text, translatable: true });
+    } catch (serviceError) {
+      setError(errorMessage(serviceError));
+    } finally {
+      dispatchCapture({ type: 'serviceFinished' });
+    }
+  }, [cozeService, exportSelection]);
+
+  const runTranslation = useCallback(async (targetLanguage: string) => {
+    const image = serviceSource.current;
+    if (!image) return;
+    dispatchCapture({ type: 'serviceStarted', service: 'translate' });
+    setError(null);
+    try {
+      const result = await cozeService.translate(image, targetLanguage);
+      setServiceResult({ title: '翻译结果', text: result.text, translatable: false });
+    } catch (serviceError) {
+      setError(errorMessage(serviceError));
+    } finally {
+      dispatchCapture({ type: 'serviceFinished' });
+    }
+  }, [cozeService]);
+
+  const runPrivacyRedaction = useCallback(async () => {
+    if (!selection) return;
+    dispatchCapture({ type: 'serviceStarted', service: 'redact' });
+    setError(null);
+    try {
+      const regions = await cozeService.redact(await exportSelection());
+      setHistory((current) => regions.reduce((next, region) => addAnnotation(next, {
+        id: `annotation-${++annotationSequence.current}`,
+        kind: 'mosaic',
+        points: [
+          { x: selection.x + region.x, y: selection.y + region.y + region.height / 2 },
+          { x: selection.x + region.x + region.width, y: selection.y + region.y + region.height / 2 },
+        ],
+        brushWidth: region.height,
+        blockSize: 10,
+      }), current));
+    } catch (serviceError) {
+      setError(errorMessage(serviceError));
+    } finally {
+      dispatchCapture({ type: 'serviceFinished' });
+    }
+  }, [cozeService, exportSelection, selection]);
+
   const handleAction = useCallback(
     (action: WechatToolbarAction) => {
       if (['rectangle', 'ellipse', 'emoji', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
@@ -298,11 +362,13 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
       if (action === 'save') void save();
       if (action === 'long-capture') void startLongCapture();
       if (action === 'cancel') void bridge.closeOverlay();
-      if (action === 'ocr' || action === 'privacy' || action === 'pin' || action === 'share') {
+      if (action === 'ocr') void runOcr();
+      if (action === 'privacy') void runPrivacyRedaction();
+      if (action === 'pin' || action === 'share') {
         setError('云端功能将在后续阶段接入');
       }
     },
-    [bridge, copyAndClose, save, startLongCapture],
+    [bridge, copyAndClose, runOcr, runPrivacyRedaction, save, startLongCapture],
   );
 
   useEffect(() => {
@@ -444,6 +510,17 @@ export function ScreenshotEditor({ sourceUrl, bridge }: ScreenshotEditorProps) {
         </div>
       ) : null}
       {error ? <div className="editor-alert" role="alert">{error}</div> : null}
+      {captureSession.mode === 'serviceBusy' ? (
+        <div className="service-busy" role="status">正在处理…</div>
+      ) : null}
+      {serviceResult ? (
+        <ServiceResult
+          title={serviceResult.title}
+          text={serviceResult.text}
+          onClose={() => setServiceResult(null)}
+          {...(serviceResult.translatable ? { onTranslate: runTranslation } : {})}
+        />
+      ) : null}
     </main>
   );
 }
