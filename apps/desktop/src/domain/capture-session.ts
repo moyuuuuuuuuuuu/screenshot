@@ -24,6 +24,7 @@ export type CaptureAction =
   | Readonly<{ type: 'scrollPreviewReady'; result: Blob }>
   | Readonly<{ type: 'scrollCancelled' }>
   | Readonly<{ type: 'scrollEditRequested'; imageUrl: string }>
+  | Readonly<{ type: 'sessionReset' }>
   | Readonly<{ type: 'serviceStarted'; service: CaptureService }>
   | Readonly<{ type: 'serviceFinished' }>;
 
@@ -63,6 +64,8 @@ export function captureSessionReducer(
         sourceUrl: action.imageUrl,
         selection: null,
       };
+    case 'sessionReset':
+      return initialCaptureSession(state.sourceUrl);
     case 'serviceStarted':
       return { ...state, mode: 'serviceBusy', service: action.service };
     case 'serviceFinished':

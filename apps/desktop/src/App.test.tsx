@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, captureFrameSource, createAppDesktopBridge } from './App';
 
@@ -58,6 +58,22 @@ describe('App', () => {
       'src',
       'data:image/png;base64,second',
     );
+  });
+
+  it('clears an old selection when the native long-capture session resets', async () => {
+    render(<App />);
+    await act(async () => undefined);
+
+    const selectionSurface = screen.getByTestId('selection-surface');
+    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 30, pointerId: 1 });
+    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 180, pointerId: 1 });
+    expect(screen.getByTestId('selection-box')).toBeInTheDocument();
+
+    act(() => tauriListeners.get('capture-session-reset')?.({ payload: undefined }));
+
+    expect(screen.queryByTestId('selection-box')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'selecting');
   });
 
   it('opens local settings when requested from the tray', async () => {

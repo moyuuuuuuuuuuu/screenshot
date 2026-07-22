@@ -53,6 +53,11 @@ export function App() {
       setSourceUrl('');
       setSession((current) => current + 1);
     }).then(retainUnlisten).catch(() => undefined);
+    void listen('capture-session-reset', () => {
+      setCaptureError(null);
+      setSourceUrl('');
+      setSession((current) => current + 1);
+    }).then(retainUnlisten).catch(() => undefined);
     void listen<string>('capture-error', (event) => {
       setCaptureError(event.payload);
     }).then(retainUnlisten).catch(() => undefined);

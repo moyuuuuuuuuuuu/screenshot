@@ -23,13 +23,14 @@ describe('captureSessionReducer', () => {
     });
   });
 
-  it('restores annotation state when scrolling is cancelled', () => {
+  it('clears selection and scroll output when a capture session is reset', () => {
     const scrolling = captureSessionReducer(annotatingSession(), { type: 'scrollStarted' });
 
-    expect(captureSessionReducer(scrolling, { type: 'scrollCancelled' })).toMatchObject({
-      mode: 'annotating',
-      selection: rect,
+    expect(captureSessionReducer(scrolling, { type: 'sessionReset' })).toMatchObject({
+      mode: 'selecting',
+      selection: null,
       scrollResult: null,
+      service: null,
     });
   });
 

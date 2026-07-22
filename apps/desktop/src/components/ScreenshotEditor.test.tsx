@@ -266,11 +266,13 @@ describe('ScreenshotEditor', () => {
       slowScrollWarning: false,
     });
     expect(screen.queryByRole('status', { name: '长截图进度' })).not.toBeInTheDocument();
-    await userEvent.keyboard('{Escape}');
+    await userEvent.keyboard('{Escape}{Escape}');
 
     expect(bridge.cancelLongCapture).toHaveBeenCalledOnce();
     expect(bridge.stopLongCapture).not.toHaveBeenCalled();
     expect(bridge.closeOverlay).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'selecting');
+    expect(screen.queryByTestId('selection-box')).not.toBeInTheDocument();
     finishCapture?.({ png: new Blob(['discarded']), partial: true, action: 'edit' });
     await waitFor(() => expect(createObjectUrl).not.toHaveBeenCalled());
     expect(container.querySelector('img[src="blob:long-capture"]')).not.toBeInTheDocument();

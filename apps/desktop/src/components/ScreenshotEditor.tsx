@@ -85,6 +85,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   const generatedSourceUrl = useRef<string | null>(null);
   const longCaptureSource = useRef<Blob | null>(null);
   const longCaptureCancelled = useRef(false);
+  const longCaptureCancelInFlight = useRef(false);
   const serviceSource = useRef<Blob | null>(null);
   const toolbarPositioner = useRef<HTMLDivElement>(null);
 
@@ -272,6 +273,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   const startLongCapture = useCallback(async () => {
     if (!selection || longCaptureProgress) return;
     longCaptureCancelled.current = false;
+    longCaptureCancelInFlight.current = false;
     dispatchCapture({ type: 'scrollStarted' });
     setError(null);
     setLongCaptureProgress({
@@ -318,15 +320,37 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     }
   }, [bridge, longCaptureProgress, selection]);
 
+  const resetEditorSession = useCallback(() => {
+    dispatchCapture({ type: 'sessionReset' });
+    setHistory(createEditorHistory());
+    setActiveTool('rectangle');
+    setTextPosition(null);
+    setError(null);
+    setServiceResult(null);
+    setToast(null);
+    setDrawingPreview(null);
+    setLongCaptureBounds(null);
+    setLongCaptureProgress(null);
+    drawingSession.current = null;
+    longCaptureSource.current = null;
+    serviceSource.current = null;
+    if (generatedSourceUrl.current) {
+      URL.revokeObjectURL(generatedSourceUrl.current);
+      generatedSourceUrl.current = null;
+    }
+  }, []);
+
   const cancelLongCaptureAndClose = useCallback(async () => {
+    if (longCaptureCancelInFlight.current) return;
+    longCaptureCancelInFlight.current = true;
     longCaptureCancelled.current = true;
-    dispatchCapture({ type: 'scrollCancelled' });
+    resetEditorSession();
     try {
       await bridge.cancelLongCapture();
     } finally {
       await bridge.closeOverlay();
     }
-  }, [bridge]);
+  }, [bridge, resetEditorSession]);
 
   const runOcr = useCallback(async () => {
     dispatchCapture({ type: 'serviceStarted', service: 'ocr' });
@@ -426,8 +450,11 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Enter') void copyAndClose();
       if (event.key === 'Escape') {
-        if (longCaptureProgress) void cancelLongCaptureAndClose();
-        else void bridge.closeOverlay();
+        if (longCaptureProgress || longCaptureCancelInFlight.current) {
+          void cancelLongCaptureAndClose();
+        } else {
+          void bridge.closeOverlay();
+        }
       }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
