@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
@@ -237,16 +237,18 @@ describe('ScreenshotEditor', () => {
     expect(createObjectUrl).toHaveBeenCalledOnce();
   });
 
-  it('keeps progress in the separate controls window and Esc stops without closing the overlay', async () => {
+  it('Esc cancels long capture and exits the overlay', async () => {
     let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
     let finishCapture: ((result: { png: Blob; partial: boolean; action: 'edit' }) => void) | undefined;
+    const createObjectUrl = vi.fn().mockReturnValue('blob:long-capture');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
     const bridge = createBridge({
       startLongCapture: vi.fn((_region, onProgress) => {
         reportProgress = onProgress;
         return new Promise<{ png: Blob; partial: boolean; action: 'edit' }>((resolve) => { finishCapture = resolve; });
       }),
     });
-    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    const { container } = render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
     const selectionSurface = screen.getByTestId('selection-surface');
     fireEvent.pointerDown(selectionSurface, { clientX: 10, clientY: 10, pointerId: 1 });
     fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
@@ -266,9 +268,12 @@ describe('ScreenshotEditor', () => {
     expect(screen.queryByRole('status', { name: '长截图进度' })).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
 
-    expect(bridge.stopLongCapture).toHaveBeenCalledOnce();
-    expect(bridge.closeOverlay).not.toHaveBeenCalled();
-    finishCapture?.({ png: new Blob(['partial']), partial: true, action: 'edit' });
+    expect(bridge.cancelLongCapture).toHaveBeenCalledOnce();
+    expect(bridge.stopLongCapture).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).toHaveBeenCalledOnce();
+    finishCapture?.({ png: new Blob(['discarded']), partial: true, action: 'edit' });
+    await waitFor(() => expect(createObjectUrl).not.toHaveBeenCalled());
+    expect(container.querySelector('img[src="blob:long-capture"]')).not.toBeInTheDocument();
   });
 
   it('shows the native long-capture failure reason', async () => {

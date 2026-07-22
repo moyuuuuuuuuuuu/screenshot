@@ -100,6 +100,20 @@ enum CaptureTermination {
     Completed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OverlayCleanup {
+    Restore,
+    Hide,
+}
+
+fn overlay_cleanup(cancel_requested: bool) -> OverlayCleanup {
+    if cancel_requested {
+        OverlayCleanup::Hide
+    } else {
+        OverlayCleanup::Restore
+    }
+}
+
 fn termination(cancel: bool, stop: bool, accepted_frames: u32) -> CaptureTermination {
     if cancel || accepted_frames == 0 {
         CaptureTermination::Cancelled
@@ -220,6 +234,10 @@ impl LongCaptureRuntime {
         self.action
             .store(LongCaptureAction::Cancel.code(), Ordering::Release);
         self.cancel_requested.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancel_requested(&self) -> bool {
+        self.cancel_requested.load(Ordering::Acquire)
     }
 
     pub fn request_edit(&self) {
@@ -555,16 +573,32 @@ pub async fn start_long_capture(
         let restore_window = window.clone();
         let restore_app = app.clone();
         let close_app = app.clone();
+        let unregister_app = app.clone();
+        let escape_registered = app.global_shortcut().register("Escape").is_ok();
         let _cleanup = CaptureCleanup::new(
             move || {
                 let _ = restore_window.set_ignore_cursor_events(false);
                 let _ = restore_app.emit("long-capture-presentation", false);
-                let _ = restore_window.show();
-                let _ = restore_window.set_focus();
+                match overlay_cleanup(
+                    restore_app
+                        .state::<LongCaptureRuntime>()
+                        .is_cancel_requested(),
+                ) {
+                    OverlayCleanup::Restore => {
+                        let _ = restore_window.show();
+                        let _ = restore_window.set_focus();
+                    }
+                    OverlayCleanup::Hide => {
+                        let _ = restore_window.hide();
+                    }
+                }
             },
             move || {
                 if let Some(controls) = close_app.get_webview_window("scroll-capture-preview") {
                     let _ = controls.close();
+                }
+                if escape_registered {
+                    let _ = unregister_app.global_shortcut().unregister("Escape");
                 }
             },
         );
@@ -575,7 +609,6 @@ pub async fn start_long_capture(
             .scale_factor()
             .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
         let region = region.to_physical(origin.x, origin.y, scale_factor);
-        let escape_registered = app.global_shortcut().register("Escape").is_ok();
         app.emit("long-capture-presentation", true)
             .map_err(|error| format!("failed to enter capture presentation: {error}"))?;
         window
@@ -589,11 +622,7 @@ pub async fn start_long_capture(
             },
         )?;
         std::thread::sleep(Duration::from_millis(150));
-        let capture = run_capture(&runtime, region);
-        if escape_registered {
-            let _ = app.global_shortcut().unregister("Escape");
-        }
-        capture
+        run_capture(&runtime, region)
     })();
     runtime.finish();
     result
@@ -636,8 +665,8 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        crop_region, prepare_capture_windows, termination, CaptureCleanup, CaptureRegion,
-        CaptureTermination,
+        crop_region, overlay_cleanup, prepare_capture_windows, termination, CaptureCleanup,
+        CaptureRegion, CaptureTermination, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
     use std::{cell::Cell, rc::Rc};
@@ -718,6 +747,22 @@ mod tests {
         }
         assert_eq!(restored.get(), 1);
         assert_eq!(closed.get(), 1);
+    }
+
+    #[test]
+    fn overlay_cleanup_restores_unless_cancel_was_requested() {
+        assert_eq!(overlay_cleanup(false), OverlayCleanup::Restore);
+        assert_eq!(overlay_cleanup(true), OverlayCleanup::Hide);
+    }
+
+    #[test]
+    fn runtime_exposes_cancel_request_for_cleanup() {
+        let runtime = super::LongCaptureRuntime::default();
+
+        assert!(!runtime.is_cancel_requested());
+        runtime.request_cancel();
+
+        assert!(runtime.is_cancel_requested());
     }
 
     #[test]

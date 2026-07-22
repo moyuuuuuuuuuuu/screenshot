@@ -18,7 +18,7 @@ fn main() {
                     if event.state == ShortcutState::Pressed {
                         if shortcut.matches(Modifiers::empty(), Code::Escape) {
                             app.state::<screenshot_tool::long_capture::LongCaptureRuntime>()
-                                .request_stop();
+                                .request_cancel();
                         } else {
                             screenshot_tool::app_state::request_capture(app);
                         }

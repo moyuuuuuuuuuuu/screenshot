@@ -84,6 +84,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   const annotationSequence = useRef(0);
   const generatedSourceUrl = useRef<string | null>(null);
   const longCaptureSource = useRef<Blob | null>(null);
+  const longCaptureCancelled = useRef(false);
   const serviceSource = useRef<Blob | null>(null);
   const toolbarPositioner = useRef<HTMLDivElement>(null);
 
@@ -270,6 +271,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
 
   const startLongCapture = useCallback(async () => {
     if (!selection || longCaptureProgress) return;
+    longCaptureCancelled.current = false;
     dispatchCapture({ type: 'scrollStarted' });
     setError(null);
     setLongCaptureProgress({
@@ -284,6 +286,10 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     });
     try {
       const result = await bridge.startLongCapture(selection, setLongCaptureProgress);
+      if (longCaptureCancelled.current) {
+        dispatchCapture({ type: 'scrollCancelled' });
+        return;
+      }
       if (result.action === 'save') {
         const savedPath = await bridge.savePng(result.png, screenshotName());
         if (savedPath) await bridge.closeOverlay();
@@ -311,6 +317,16 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       setLongCaptureProgress(null);
     }
   }, [bridge, longCaptureProgress, selection]);
+
+  const cancelLongCaptureAndClose = useCallback(async () => {
+    longCaptureCancelled.current = true;
+    dispatchCapture({ type: 'scrollCancelled' });
+    try {
+      await bridge.cancelLongCapture();
+    } finally {
+      await bridge.closeOverlay();
+    }
+  }, [bridge]);
 
   const runOcr = useCallback(async () => {
     dispatchCapture({ type: 'serviceStarted', service: 'ocr' });
@@ -410,7 +426,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Enter') void copyAndClose();
       if (event.key === 'Escape') {
-        if (longCaptureProgress) void bridge.stopLongCapture();
+        if (longCaptureProgress) void cancelLongCaptureAndClose();
         else void bridge.closeOverlay();
       }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
@@ -424,7 +440,7 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bridge, copyAndClose, longCaptureProgress, save]);
+  }, [bridge, cancelLongCaptureAndClose, copyAndClose, longCaptureProgress, save]);
 
   const showToolbar = selection && selection.width > 0 && selection.height > 0;
   const viewportBounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
