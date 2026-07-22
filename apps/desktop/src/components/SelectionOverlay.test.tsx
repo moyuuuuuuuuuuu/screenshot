@@ -14,14 +14,12 @@ describe('SelectionOverlay', () => {
     );
 
     expect(document.querySelectorAll('.selection-handle[data-tone="wechat-green"]')).toHaveLength(8);
-    expect(screen.getByTestId('selection-surface'))
-      .toHaveClass('selection-surface--has-selection');
     expect(screen.getByTestId('selection-move-handle')).toHaveTextContent('100 × 80');
     expect(screen.getByTestId('selection-move-handle')).toHaveAttribute('data-placement', 'adaptive');
   });
 
-  it('uses the full-surface mask class only before a selection exists', () => {
-    render(
+  it('uses one full mask before a selection exists', () => {
+    const { container } = render(
       <SelectionOverlay
         selection={null}
         bounds={{ x: 0, y: 0, width: 300, height: 200 }}
@@ -29,8 +27,26 @@ describe('SelectionOverlay', () => {
       />,
     );
 
-    expect(screen.getByTestId('selection-surface'))
-      .not.toHaveClass('selection-surface--has-selection');
+    expect(container.querySelectorAll('.selection-mask')).toHaveLength(1);
+    expect(container.querySelector('.selection-mask--full')).toBeInTheDocument();
+    expect(container.querySelector('[data-mask-side]')).not.toBeInTheDocument();
+  });
+
+  it('renders four non-overlapping masks around a selection', () => {
+    const { container } = render(
+      <SelectionOverlay
+        selection={{ x: 20, y: 30, width: 100, height: 80 }}
+        bounds={{ x: 0, y: 0, width: 300, height: 200 }}
+        onSelectionChange={vi.fn()}
+      />,
+    );
+    const mask = (side: string) => container.querySelector(`[data-mask-side="${side}"]`);
+
+    expect(mask('top')).toHaveStyle({ left: '0px', top: '0px', width: '300px', height: '30px' });
+    expect(mask('right')).toHaveStyle({ left: '120px', top: '30px', width: '180px', height: '80px' });
+    expect(mask('bottom')).toHaveStyle({ left: '0px', top: '110px', width: '300px', height: '90px' });
+    expect(mask('left')).toHaveStyle({ left: '0px', top: '30px', width: '20px', height: '80px' });
+    expect(container.querySelectorAll('.selection-mask')).toHaveLength(4);
   });
 
   it('moves an existing selection without creating a new one', () => {

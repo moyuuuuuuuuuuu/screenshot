@@ -62,7 +62,7 @@ export function SelectionOverlay({
 
   return (
     <div
-      className={`selection-surface${locked ? ' selection-surface--locked' : ''}${hasSelection ? ' selection-surface--has-selection' : ''}`}
+      className={`selection-surface${locked ? ' selection-surface--locked' : ''}`}
       data-testid="selection-surface"
       onPointerDown={(event) => {
         dragStart.current = { x: event.clientX, y: event.clientY };
@@ -90,6 +90,52 @@ export function SelectionOverlay({
         event.currentTarget.releasePointerCapture?.(event.pointerId);
       }}
     >
+      {hasSelection && selection ? (
+        <>
+          <div
+            className="selection-mask"
+            data-mask-side="top"
+            style={{
+              left: bounds.x,
+              top: bounds.y,
+              width: bounds.width,
+              height: Math.max(0, selection.y - bounds.y),
+            }}
+          />
+          <div
+            className="selection-mask"
+            data-mask-side="right"
+            style={{
+              left: selection.x + selection.width,
+              top: selection.y,
+              width: Math.max(0, bounds.x + bounds.width - selection.x - selection.width),
+              height: selection.height,
+            }}
+          />
+          <div
+            className="selection-mask"
+            data-mask-side="bottom"
+            style={{
+              left: bounds.x,
+              top: selection.y + selection.height,
+              width: bounds.width,
+              height: Math.max(0, bounds.y + bounds.height - selection.y - selection.height),
+            }}
+          />
+          <div
+            className="selection-mask"
+            data-mask-side="left"
+            style={{
+              left: bounds.x,
+              top: selection.y,
+              width: Math.max(0, selection.x - bounds.x),
+              height: selection.height,
+            }}
+          />
+        </>
+      ) : (
+        <div className="selection-mask selection-mask--full" />
+      )}
       {selection && selection.width > 0 && selection.height > 0 ? (
         <div
           className="selection-box"
