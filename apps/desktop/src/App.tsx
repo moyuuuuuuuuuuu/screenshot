@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { DesktopBridge } from './bridge/desktop-bridge';
 import type { AppSettings } from './bridge/desktop-bridge';
 import { createTauriDesktopBridge } from './bridge/tauri-desktop-bridge';
@@ -38,7 +38,7 @@ export function App() {
   const windowParameters = new URLSearchParams(window.location.search);
   const windowKind = windowParameters.get('window');
   const controlWindow = windowKind === 'scroll-capture-preview';
-  const borderWindow = windowKind === 'scroll-border';
+  const maskWindow = windowKind === 'scroll-mask';
   const pinLabel = windowKind === 'pin' ? windowParameters.get('label') : null;
   const [sourceUrl, setSourceUrl] = useState('');
   const [session, setSession] = useState(0);
@@ -93,7 +93,23 @@ export function App() {
     };
   }, []);
 
-  if (borderWindow) return <div className="scroll-capture-border" aria-hidden="true" />;
+  if (maskWindow) {
+    const edge = windowParameters.get('edge') ?? '';
+    const edgeStart = Number(windowParameters.get('edgeStart')) || 0;
+    const edgeLength = Number(windowParameters.get('edgeLength')) || 0;
+    return (
+      <div className="scroll-capture-mask" aria-hidden="true">
+        <span
+          className="scroll-capture-mask__edge"
+          data-edge={edge}
+          style={{
+            '--edge-start': `${edgeStart}px`,
+            '--edge-length': `${edgeLength}px`,
+          } as CSSProperties}
+        />
+      </div>
+    );
+  }
   if (controlWindow) return <ScrollCapturePreview bridge={desktopBridge}
     side={windowParameters.get('side') === 'left' ? 'left' : 'right'} />;
   if (pinLabel) return <PinWindow label={pinLabel} bridge={desktopBridge} />;

@@ -66,11 +66,19 @@ describe('App', () => {
     );
   });
 
-  it('renders only a passive green surface in a long-capture border window', () => {
-    window.history.replaceState({}, '', '/?window=scroll-border');
+  it('renders an input-blocking long-capture mask with its inward edge', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?window=scroll-mask&edge=bottom&edgeStart=500&edgeLength=1000',
+    );
     const { container } = render(<App />);
 
-    expect(container.querySelector('.scroll-capture-border')).toBeInTheDocument();
+    expect(container.querySelector('.scroll-capture-mask')).toBeInTheDocument();
+    expect(container.querySelector('.scroll-capture-mask__edge'))
+      .toHaveAttribute('data-edge', 'bottom');
+    expect(container.querySelector('.scroll-capture-mask__edge'))
+      .toHaveStyle('--edge-start: 500px; --edge-length: 1000px');
     expect(screen.queryByLabelText('截图编辑器')).not.toBeInTheDocument();
   });
 

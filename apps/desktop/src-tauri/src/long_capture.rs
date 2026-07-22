@@ -9,7 +9,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
-use crate::preview_windows::{open_capture_border_windows, open_preview_window, ScreenRect};
+use crate::preview_windows::{open_capture_mask_windows, open_preview_window, ScreenRect};
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::static_region_detector::detect_static_regions;
@@ -395,12 +395,12 @@ fn append_stable_candidate(
 }
 
 fn prepare_capture_windows(
+    open_and_exclude_masks: impl FnOnce() -> Result<(), String>,
     open_and_exclude_preview: impl FnOnce() -> Result<(), String>,
-    open_and_exclude_borders: impl FnOnce() -> Result<(), String>,
     hide_overlay: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
+    open_and_exclude_masks()?;
     open_and_exclude_preview()?;
-    open_and_exclude_borders()?;
     hide_overlay()?;
     Ok(())
 }
@@ -422,13 +422,10 @@ fn run_cleanup_callbacks(
     }
 }
 
-fn open_controls_window(
+fn capture_monitor_rect(
     app: &tauri::AppHandle,
     region: CaptureRegion,
-) -> Result<tauri::WebviewWindow, String> {
-    if let Some(existing) = app.get_webview_window("scroll-capture-preview") {
-        let _ = existing.close();
-    }
+) -> Result<ScreenRect, String> {
     let center_x = (region.x + region.width / 2.0).round() as i32;
     let center_y = (region.y + region.height / 2.0).round() as i32;
     let monitors = app
@@ -447,6 +444,22 @@ fn open_controls_window(
         .ok_or_else(|| "cannot place long-capture controls outside the selection".to_string())?;
     let position = monitor.position();
     let size = monitor.size();
+    Ok(ScreenRect {
+        x: position.x,
+        y: position.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    })
+}
+
+fn open_controls_window(
+    app: &tauri::AppHandle,
+    region: CaptureRegion,
+    monitor: ScreenRect,
+) -> Result<tauri::WebviewWindow, String> {
+    if let Some(existing) = app.get_webview_window("scroll-capture-preview") {
+        let _ = existing.close();
+    }
     open_preview_window(
         app,
         ScreenRect {
@@ -455,12 +468,7 @@ fn open_controls_window(
             width: region.width.round() as i32,
             height: region.height.round() as i32,
         },
-        ScreenRect {
-            x: position.x,
-            y: position.y,
-            width: size.width as i32,
-            height: size.height as i32,
-        },
+        monitor,
     )
 }
 
@@ -630,10 +638,10 @@ pub async fn start_long_capture(
             move || {
                 for label in [
                     "scroll-capture-preview",
-                    "scroll-border-top",
-                    "scroll-border-right",
-                    "scroll-border-bottom",
-                    "scroll-border-left",
+                    "scroll-mask-top",
+                    "scroll-mask-right",
+                    "scroll-mask-bottom",
+                    "scroll-mask-left",
                 ] {
                     if let Some(window) = close_app.get_webview_window(label) {
                         let _ = window.close();
@@ -651,30 +659,29 @@ pub async fn start_long_capture(
             .scale_factor()
             .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
         let region = region.to_physical(origin.x, origin.y, scale_factor);
+        let selection = ScreenRect {
+            x: region.x.round() as i32,
+            y: region.y.round() as i32,
+            width: region.width.round() as i32,
+            height: region.height.round() as i32,
+        };
+        let monitor = capture_monitor_rect(&app, region)?;
         prepare_capture_windows(
             || {
-                let preview = open_controls_window(&app, region)?;
-                platform::exclude_window_from_capture(&preview)
-            },
-            || {
-                let borders = open_capture_border_windows(
-                    &app,
-                    ScreenRect {
-                        x: region.x.round() as i32,
-                        y: region.y.round() as i32,
-                        width: region.width.round() as i32,
-                        height: region.height.round() as i32,
-                    },
-                )?;
-                for border in &borders {
-                    if let Err(error) = platform::exclude_window_from_capture(border) {
-                        for border in borders {
-                            let _ = border.close();
+                let masks = open_capture_mask_windows(&app, selection, monitor)?;
+                for mask in &masks {
+                    if let Err(error) = platform::exclude_window_from_capture(mask) {
+                        for mask in masks {
+                            let _ = mask.close();
                         }
                         return Err(error);
                     }
                 }
                 Ok(())
+            },
+            || {
+                let preview = open_controls_window(&app, region, monitor)?;
+                platform::exclude_window_from_capture(&preview)
             },
             || {
                 window
@@ -790,17 +797,17 @@ mod tests {
     #[test]
     fn preparation_finishes_temporary_windows_before_hiding_overlay() {
         let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mask_events = events.clone();
         let preview_events = events.clone();
-        let border_events = events.clone();
         let overlay_events = events.clone();
 
         prepare_capture_windows(
             || {
-                preview_events.borrow_mut().push("preview");
+                mask_events.borrow_mut().push("masks");
                 Ok(())
             },
             || {
-                border_events.borrow_mut().push("borders");
+                preview_events.borrow_mut().push("preview");
                 Ok(())
             },
             || {
@@ -810,24 +817,24 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(*events.borrow(), vec!["preview", "borders", "hide-overlay"]);
+        assert_eq!(*events.borrow(), vec!["masks", "preview", "hide-overlay"]);
     }
 
     #[test]
-    fn preparation_does_not_hide_overlay_when_border_creation_fails() {
+    fn preparation_does_not_open_preview_when_mask_creation_fails() {
         let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mask_events = events.clone();
         let preview_events = events.clone();
-        let border_events = events.clone();
         let overlay_events = events.clone();
 
         let result = prepare_capture_windows(
             || {
-                preview_events.borrow_mut().push("preview");
-                Ok(())
+                mask_events.borrow_mut().push("masks");
+                Err("mask creation failed".to_string())
             },
             || {
-                border_events.borrow_mut().push("borders");
-                Err("border creation failed".to_string())
+                preview_events.borrow_mut().push("preview");
+                Ok(())
             },
             || {
                 overlay_events.borrow_mut().push("hide-overlay");
@@ -835,8 +842,8 @@ mod tests {
             },
         );
 
-        assert_eq!(result.unwrap_err(), "border creation failed");
-        assert_eq!(*events.borrow(), vec!["preview", "borders"]);
+        assert_eq!(result.unwrap_err(), "mask creation failed");
+        assert_eq!(*events.borrow(), vec!["masks"]);
     }
 
     #[test]

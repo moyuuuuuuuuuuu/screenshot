@@ -37,50 +37,95 @@ fn preview_window_policy() -> PreviewWindowPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BorderLayout {
-    pub label: &'static str,
-    pub rect: ScreenRect,
+pub(crate) enum MaskEdge {
+    Top,
+    Right,
+    Bottom,
+    Left,
 }
 
-pub(crate) fn border_window_layouts(selection: ScreenRect) -> [BorderLayout; 4] {
+impl MaskEdge {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Right => "right",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MaskLayout {
+    pub label: &'static str,
+    pub rect: ScreenRect,
+    pub edge: MaskEdge,
+    pub edge_start: i32,
+    pub edge_length: i32,
+}
+
+pub(crate) fn mask_window_layouts(
+    selection: ScreenRect,
+    monitor: ScreenRect,
+) -> Vec<MaskLayout> {
+    let monitor_right = monitor.x + monitor.width;
+    let monitor_bottom = monitor.y + monitor.height;
+    let selection_right = selection.x + selection.width;
+    let selection_bottom = selection.y + selection.height;
+    let horizontal_edge_start = selection.x - monitor.x;
     [
-        BorderLayout {
-            label: "scroll-border-top",
+        MaskLayout {
+            label: "scroll-mask-top",
             rect: ScreenRect {
-                x: selection.x,
-                y: selection.y - 1,
-                width: selection.width,
-                height: 1,
+                x: monitor.x,
+                y: monitor.y,
+                width: monitor.width,
+                height: selection.y - monitor.y,
             },
+            edge: MaskEdge::Bottom,
+            edge_start: horizontal_edge_start,
+            edge_length: selection.width,
         },
-        BorderLayout {
-            label: "scroll-border-right",
+        MaskLayout {
+            label: "scroll-mask-right",
             rect: ScreenRect {
-                x: selection.x + selection.width,
+                x: selection_right,
                 y: selection.y,
-                width: 1,
+                width: monitor_right - selection_right,
                 height: selection.height,
             },
+            edge: MaskEdge::Left,
+            edge_start: 0,
+            edge_length: selection.height,
         },
-        BorderLayout {
-            label: "scroll-border-bottom",
+        MaskLayout {
+            label: "scroll-mask-bottom",
             rect: ScreenRect {
-                x: selection.x,
-                y: selection.y + selection.height,
-                width: selection.width,
-                height: 1,
+                x: monitor.x,
+                y: selection_bottom,
+                width: monitor.width,
+                height: monitor_bottom - selection_bottom,
             },
+            edge: MaskEdge::Top,
+            edge_start: horizontal_edge_start,
+            edge_length: selection.width,
         },
-        BorderLayout {
-            label: "scroll-border-left",
+        MaskLayout {
+            label: "scroll-mask-left",
             rect: ScreenRect {
-                x: selection.x - 1,
+                x: monitor.x,
                 y: selection.y,
-                width: 1,
+                width: selection.x - monitor.x,
                 height: selection.height,
             },
+            edge: MaskEdge::Right,
+            edge_start: 0,
+            edge_length: selection.height,
         },
     ]
+    .into_iter()
+    .filter(|layout| layout.rect.width > 0 && layout.rect.height > 0)
+    .collect()
 }
 
 pub(crate) fn preview_window_layout(
@@ -165,12 +210,13 @@ pub(crate) fn open_preview_window(
     .map_err(|error| format!("failed to open scroll preview: {error}"))
 }
 
-pub(crate) fn open_capture_border_windows(
+pub(crate) fn open_capture_mask_windows(
     app: &tauri::AppHandle,
     selection: ScreenRect,
+    monitor: ScreenRect,
 ) -> Result<Vec<tauri::WebviewWindow>, String> {
     let mut windows = Vec::with_capacity(4);
-    for layout in border_window_layouts(selection) {
+    for layout in mask_window_layouts(selection, monitor) {
         if let Some(existing) = tauri::Manager::get_webview_window(app, layout.label) {
             let _ = existing.close();
         }
@@ -178,13 +224,18 @@ pub(crate) fn open_capture_border_windows(
             let window = WebviewWindowBuilder::new(
                 app,
                 layout.label,
-                WebviewUrl::App("index.html?window=scroll-border".into()),
+                WebviewUrl::App(
+                    format!(
+                        "index.html?window=scroll-mask&edge={}&edgeStart={}&edgeLength={}",
+                        layout.edge.as_str(),
+                        layout.edge_start,
+                        layout.edge_length,
+                    )
+                    .into(),
+                ),
             )
             .title("")
-            .inner_size(
-                layout.rect.width.max(1) as f64,
-                layout.rect.height.max(1) as f64,
-            )
+            .inner_size(layout.rect.width as f64, layout.rect.height as f64)
             .position(layout.rect.x as f64, layout.rect.y as f64)
             .decorations(false)
             .transparent(true)
@@ -201,13 +252,13 @@ pub(crate) fn open_capture_border_windows(
                 .map_err(|error| format!("failed to position {}: {error}", layout.label))?;
             window
                 .set_size(PhysicalSize::new(
-                    layout.rect.width.max(1) as u32,
-                    layout.rect.height.max(1) as u32,
+                    layout.rect.width as u32,
+                    layout.rect.height as u32,
                 ))
                 .map_err(|error| format!("failed to size {}: {error}", layout.label))?;
             window
-                .set_ignore_cursor_events(true)
-                .map_err(|error| format!("failed to pass through {}: {error}", layout.label))?;
+                .set_ignore_cursor_events(false)
+                .map_err(|error| format!("failed to block input for {}: {error}", layout.label))?;
             Ok(window)
         })();
         match result {
@@ -226,7 +277,7 @@ pub(crate) fn open_capture_border_windows(
 #[cfg(test)]
 mod tests {
     use super::{
-        border_window_layouts, preview_window_layout, preview_window_policy, PreviewLayout,
+        mask_window_layouts, preview_window_layout, preview_window_policy, PreviewLayout,
         PreviewSide, ScreenRect,
     };
 
@@ -241,6 +292,10 @@ mod tests {
             width: layout.width,
             height: layout.height,
         }
+    }
+
+    fn area(rect: ScreenRect) -> i64 {
+        i64::from(rect.width) * i64::from(rect.height)
     }
 
     #[test]
@@ -337,54 +392,80 @@ mod tests {
     }
 
     #[test]
-    fn border_windows_surround_without_entering_selection() {
-        let selection = ScreenRect {
-            x: 100,
-            y: 80,
-            width: 500,
-            height: 600,
+    fn mask_windows_cover_monitor_without_entering_selection() {
+        let monitor = ScreenRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
         };
-        let borders = border_window_layouts(selection);
+        let selection = ScreenRect {
+            x: 500,
+            y: 300,
+            width: 1000,
+            height: 700,
+        };
+        let masks = mask_window_layouts(selection, monitor);
 
         assert_eq!(
-            borders[0].rect,
-            ScreenRect {
-                x: 100,
-                y: 79,
-                width: 500,
-                height: 1,
-            }
+            masks.iter().map(|mask| mask.rect).collect::<Vec<_>>(),
+            vec![
+                ScreenRect {
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 300,
+                },
+                ScreenRect {
+                    x: 1500,
+                    y: 300,
+                    width: 420,
+                    height: 700,
+                },
+                ScreenRect {
+                    x: 0,
+                    y: 1000,
+                    width: 1920,
+                    height: 80,
+                },
+                ScreenRect {
+                    x: 0,
+                    y: 300,
+                    width: 500,
+                    height: 700,
+                },
+            ]
         );
-        assert_eq!(
-            borders[1].rect,
-            ScreenRect {
-                x: 600,
-                y: 80,
-                width: 1,
-                height: 600,
-            }
-        );
-        assert_eq!(
-            borders[2].rect,
-            ScreenRect {
-                x: 100,
-                y: 680,
-                width: 500,
-                height: 1,
-            }
-        );
-        assert_eq!(
-            borders[3].rect,
-            ScreenRect {
-                x: 99,
-                y: 80,
-                width: 1,
-                height: 600,
-            }
-        );
-        assert!(borders
+        assert!(masks
             .iter()
-            .all(|border| !intersects(selection, border.rect)));
+            .all(|mask| !intersects(selection, mask.rect)));
+        assert_eq!(
+            masks.iter().map(|mask| area(mask.rect)).sum::<i64>(),
+            area(monitor) - area(selection)
+        );
+    }
+
+    #[test]
+    fn mask_windows_omit_zero_sized_edges() {
+        let monitor = ScreenRect {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let selection = ScreenRect {
+            x: -1920,
+            y: 0,
+            width: 1200,
+            height: 1080,
+        };
+
+        let masks = mask_window_layouts(selection, monitor);
+
+        assert_eq!(masks.len(), 1);
+        assert_eq!(masks[0].label, "scroll-mask-right");
+        assert_eq!(masks[0].rect.width, 720);
+        assert!(masks.iter().all(|mask| mask.rect.width > 0 && mask.rect.height > 0));
     }
 
     #[test]

@@ -22,7 +22,16 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .long-capture-presentation .selection-mask { display: none; }
 .long-capture-presentation .selection-box { border-color: #07c160; box-shadow: none; }
 button { font: inherit; }
-.scroll-capture-border { width: 100vw; height: 100vh; background: #07c160; }
+.scroll-capture-mask { position: relative; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.3); }
+.scroll-capture-mask__edge { position: absolute; background: #07c160; }
+.scroll-capture-mask__edge[data-edge="top"],
+.scroll-capture-mask__edge[data-edge="bottom"] { left: var(--edge-start); width: var(--edge-length); height: 1px; }
+.scroll-capture-mask__edge[data-edge="top"] { top: 0; }
+.scroll-capture-mask__edge[data-edge="bottom"] { bottom: 0; }
+.scroll-capture-mask__edge[data-edge="left"],
+.scroll-capture-mask__edge[data-edge="right"] { top: var(--edge-start); width: 1px; height: var(--edge-length); }
+.scroll-capture-mask__edge[data-edge="left"] { left: 0; }
+.scroll-capture-mask__edge[data-edge="right"] { right: 0; }
 
 .screenshot-editor {
   position: relative;
