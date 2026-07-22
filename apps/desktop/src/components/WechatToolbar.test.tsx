@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { WechatToolbar } from './WechatToolbar';
 
 const labels = [
-  '矩形', '圆形', '表情', '箭头', '画笔', '马赛克', '文字', '隐私工具',
-  '文字识别', '滚动截图', '撤销', '保存', '钉住', '转发', '取消', '完成',
+  '矩形', '圆形', '表情', '箭头', '画笔', '马赛克', '文字', '文字识别',
+  '滚动截图', '撤销', '保存', '钉住', '转发', '取消', '完成',
 ];
 
 describe('WechatToolbar', () => {
@@ -23,6 +23,13 @@ describe('WechatToolbar', () => {
       expect(icon).toHaveAttribute('stroke-width', '1.8');
       expect(icon).toHaveClass('lucide');
     }
+    expect(screen.queryByRole('button', { name: '隐私工具' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '马赛克' }).querySelector('svg'))
+      .toHaveClass('lucide-blocks');
+    expect(screen.getByRole('button', { name: '文字识别' }).querySelector('svg'))
+      .toHaveClass('lucide-languages');
+    expect(screen.getByRole('button', { name: '滚动截图' }).querySelector('svg'))
+      .toHaveClass('lucide-gallery-vertical-end');
   });
 
   it('disables undo without history and dispatches the selected action', async () => {

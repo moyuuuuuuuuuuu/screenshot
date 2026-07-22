@@ -1,13 +1,13 @@
 import {
-  ArrowUpRight, Check, Circle, Grid2X2, ImageDown, PenLine, Pin, Save,
-  ScanText, Send, ShieldCheck, Smile, Square, Type, Undo2, X,
+  ArrowUpRight, Blocks, Check, Circle, GalleryVerticalEnd, Languages, PenLine, Pin, Save,
+  Send, Smile, Square, Type, Undo2, X,
   type LucideIcon,
 } from 'lucide-react';
 import { ToolOptions } from './ToolOptions';
 
 export type WechatToolbarAction =
   | 'rectangle' | 'ellipse' | 'emoji' | 'arrow' | 'pen' | 'mosaic' | 'text'
-  | 'privacy' | 'ocr' | 'long-capture' | 'undo' | 'save' | 'pin' | 'share'
+  | 'ocr' | 'long-capture' | 'undo' | 'save' | 'pin' | 'share'
   | 'cancel' | 'complete';
 
 type ActionDefinition = Readonly<{
@@ -24,11 +24,10 @@ const actions: readonly ActionDefinition[] = [
   { action: 'emoji', label: '表情', icon: Smile },
   { action: 'arrow', label: '箭头', icon: ArrowUpRight },
   { action: 'pen', label: '画笔', icon: PenLine },
-  { action: 'mosaic', label: '马赛克', icon: Grid2X2 },
+  { action: 'mosaic', label: '马赛克', icon: Blocks },
   { action: 'text', label: '文字', icon: Type },
-  { action: 'privacy', label: '隐私工具', icon: ShieldCheck, separatorBefore: true },
-  { action: 'ocr', label: '文字识别', icon: ScanText },
-  { action: 'long-capture', label: '滚动截图', icon: ImageDown },
+  { action: 'ocr', label: '文字识别', icon: Languages, separatorBefore: true },
+  { action: 'long-capture', label: '滚动截图', icon: GalleryVerticalEnd },
   { action: 'undo', label: '撤销', icon: Undo2, separatorBefore: true },
   { action: 'save', label: '保存', icon: Save },
   { action: 'pin', label: '钉住', icon: Pin },

@@ -16,6 +16,8 @@ describe('ServiceResult', () => {
     );
 
     expect(screen.getByRole('textbox', { name: '服务结果' })).toHaveValue('Hello');
+    expect(screen.getByRole('button', { name: '翻译为中文' }).querySelector('svg'))
+      .toHaveClass('lucide-languages');
     await userEvent.click(screen.getByRole('button', { name: '翻译为中文' }));
     expect(onTranslate).toHaveBeenCalledWith('zh-CN');
   });

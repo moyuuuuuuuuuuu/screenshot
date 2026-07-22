@@ -382,29 +382,6 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     }
   }, [cozeService]);
 
-  const runPrivacyRedaction = useCallback(async () => {
-    if (!selection) return;
-    dispatchCapture({ type: 'serviceStarted', service: 'redact' });
-    setError(null);
-    try {
-      const regions = await cozeService.redact(await exportSelection());
-      setHistory((current) => regions.reduce((next, region) => addAnnotation(next, {
-        id: `annotation-${++annotationSequence.current}`,
-        kind: 'mosaic',
-        points: [
-          { x: selection.x + region.x, y: selection.y + region.y + region.height / 2 },
-          { x: selection.x + region.x + region.width, y: selection.y + region.y + region.height / 2 },
-        ],
-        brushWidth: region.height,
-        blockSize: 10,
-      }), current));
-    } catch (serviceError) {
-      setError(errorMessage(serviceError));
-    } finally {
-      dispatchCapture({ type: 'serviceFinished' });
-    }
-  }, [cozeService, exportSelection, selection]);
-
   const pinSelection = useCallback(async () => {
     if (!selection) return;
     setError(null);
@@ -439,11 +416,10 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       if (action === 'long-capture') void startLongCapture();
       if (action === 'cancel') void bridge.closeOverlay();
       if (action === 'ocr') void runOcr();
-      if (action === 'privacy') void runPrivacyRedaction();
       if (action === 'pin') void pinSelection();
       if (action === 'share') void shareSelection();
     },
-    [bridge, copyAndClose, pinSelection, runOcr, runPrivacyRedaction, save, shareSelection, startLongCapture],
+    [bridge, copyAndClose, pinSelection, runOcr, save, shareSelection, startLongCapture],
   );
 
   useEffect(() => {
