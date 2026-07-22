@@ -14,6 +14,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 describe('App', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/');
     tauriInvoke.mockClear();
     tauriListeners.clear();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
@@ -58,6 +59,14 @@ describe('App', () => {
       'src',
       'data:image/png;base64,second',
     );
+  });
+
+  it('renders only a passive green surface in a long-capture border window', () => {
+    window.history.replaceState({}, '', '/?window=scroll-border');
+    const { container } = render(<App />);
+
+    expect(container.querySelector('.scroll-capture-border')).toBeInTheDocument();
+    expect(screen.queryByLabelText('截图编辑器')).not.toBeInTheDocument();
   });
 
   it('clears an old selection when the native long-capture session resets', async () => {

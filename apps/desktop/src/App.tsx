@@ -29,6 +29,7 @@ export function App() {
   const windowParameters = new URLSearchParams(window.location.search);
   const windowKind = windowParameters.get('window');
   const controlWindow = windowKind === 'scroll-capture-preview';
+  const borderWindow = windowKind === 'scroll-border';
   const pinLabel = windowKind === 'pin' ? windowParameters.get('label') : null;
   const [sourceUrl, setSourceUrl] = useState('');
   const [session, setSession] = useState(0);
@@ -77,6 +78,7 @@ export function App() {
     };
   }, []);
 
+  if (borderWindow) return <div className="scroll-capture-border" aria-hidden="true" />;
   if (controlWindow) return <ScrollCapturePreview bridge={desktopBridge}
     side={windowParameters.get('side') === 'left' ? 'left' : 'right'} />;
   if (pinLabel) return <PinWindow label={pinLabel} bridge={desktopBridge} />;

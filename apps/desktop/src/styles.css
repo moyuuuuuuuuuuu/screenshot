@@ -21,6 +21,7 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .long-capture-presentation .selection-surface { background: transparent; pointer-events: none; }
 .long-capture-presentation .selection-box { border-color: #07c160; box-shadow: none; }
 button { font: inherit; }
+.scroll-capture-border { width: 100vw; height: 100vh; background: #07c160; }
 
 .screenshot-editor {
   position: relative;

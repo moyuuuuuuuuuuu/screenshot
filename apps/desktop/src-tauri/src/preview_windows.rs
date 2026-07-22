@@ -1,4 +1,4 @@
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScreenRect {
@@ -21,6 +21,53 @@ pub(crate) struct PreviewLayout {
     pub width: i32,
     pub height: i32,
     pub side: PreviewSide,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BorderLayout {
+    pub label: &'static str,
+    pub rect: ScreenRect,
+}
+
+pub(crate) fn border_window_layouts(selection: ScreenRect) -> [BorderLayout; 4] {
+    [
+        BorderLayout {
+            label: "scroll-border-top",
+            rect: ScreenRect {
+                x: selection.x,
+                y: selection.y - 1,
+                width: selection.width,
+                height: 1,
+            },
+        },
+        BorderLayout {
+            label: "scroll-border-right",
+            rect: ScreenRect {
+                x: selection.x + selection.width,
+                y: selection.y,
+                width: 1,
+                height: selection.height,
+            },
+        },
+        BorderLayout {
+            label: "scroll-border-bottom",
+            rect: ScreenRect {
+                x: selection.x,
+                y: selection.y + selection.height,
+                width: selection.width,
+                height: 1,
+            },
+        },
+        BorderLayout {
+            label: "scroll-border-left",
+            rect: ScreenRect {
+                x: selection.x - 1,
+                y: selection.y,
+                width: 1,
+                height: selection.height,
+            },
+        },
+    ]
 }
 
 pub(crate) fn preview_window_layout(
@@ -102,9 +149,66 @@ pub(crate) fn open_preview_window(
     .map_err(|error| format!("failed to open scroll preview: {error}"))
 }
 
+pub(crate) fn open_capture_border_windows(
+    app: &tauri::AppHandle,
+    selection: ScreenRect,
+) -> Result<Vec<tauri::WebviewWindow>, String> {
+    let mut windows = Vec::with_capacity(4);
+    for layout in border_window_layouts(selection) {
+        if let Some(existing) = tauri::Manager::get_webview_window(app, layout.label) {
+            let _ = existing.close();
+        }
+        let result = (|| {
+            let window = WebviewWindowBuilder::new(
+                app,
+                layout.label,
+                WebviewUrl::App("index.html?window=scroll-border".into()),
+            )
+            .title("")
+            .inner_size(layout.rect.width.max(1) as f64, layout.rect.height.max(1) as f64)
+            .position(layout.rect.x as f64, layout.rect.y as f64)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .shadow(false)
+            .focused(false)
+            .focusable(false)
+            .build()
+            .map_err(|error| format!("failed to open {}: {error}", layout.label))?;
+            window
+                .set_position(PhysicalPosition::new(layout.rect.x, layout.rect.y))
+                .map_err(|error| format!("failed to position {}: {error}", layout.label))?;
+            window
+                .set_size(PhysicalSize::new(
+                    layout.rect.width.max(1) as u32,
+                    layout.rect.height.max(1) as u32,
+                ))
+                .map_err(|error| format!("failed to size {}: {error}", layout.label))?;
+            window
+                .set_ignore_cursor_events(true)
+                .map_err(|error| format!("failed to pass through {}: {error}", layout.label))?;
+            Ok(window)
+        })();
+        match result {
+            Ok(window) => windows.push(window),
+            Err(error) => {
+                for window in windows {
+                    let _ = window.close();
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(windows)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{preview_window_layout, PreviewLayout, PreviewSide, ScreenRect};
+    use super::{
+        border_window_layouts, preview_window_layout, PreviewLayout, PreviewSide, ScreenRect,
+    };
 
     fn intersects(a: ScreenRect, b: ScreenRect) -> bool {
         a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
@@ -209,6 +313,59 @@ mod tests {
         assert_eq!(
             error,
             "not enough space outside the selection for long-capture controls"
+        );
+    }
+
+    #[test]
+    fn border_windows_surround_without_entering_selection() {
+        let selection = ScreenRect {
+            x: 100,
+            y: 80,
+            width: 500,
+            height: 600,
+        };
+        let borders = border_window_layouts(selection);
+
+        assert_eq!(
+            borders[0].rect,
+            ScreenRect {
+                x: 100,
+                y: 79,
+                width: 500,
+                height: 1,
+            }
+        );
+        assert_eq!(
+            borders[1].rect,
+            ScreenRect {
+                x: 600,
+                y: 80,
+                width: 1,
+                height: 600,
+            }
+        );
+        assert_eq!(
+            borders[2].rect,
+            ScreenRect {
+                x: 100,
+                y: 680,
+                width: 500,
+                height: 1,
+            }
+        );
+        assert_eq!(
+            borders[3].rect,
+            ScreenRect {
+                x: 99,
+                y: 80,
+                width: 1,
+                height: 600,
+            }
+        );
+        assert!(
+            borders
+                .iter()
+                .all(|border| !intersects(selection, border.rect))
         );
     }
 }
