@@ -32,7 +32,7 @@ struct PreviewWindowPolicy {
 fn preview_window_policy() -> PreviewWindowPolicy {
     PreviewWindowPolicy {
         focused: false,
-        focusable: true,
+        focusable: false,
     }
 }
 
@@ -392,6 +392,6 @@ mod tests {
         let policy = preview_window_policy();
 
         assert!(!policy.focused);
-        assert!(policy.focusable);
+        assert!(!policy.focusable);
     }
 }
