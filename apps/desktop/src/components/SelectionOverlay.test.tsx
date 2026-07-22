@@ -14,8 +14,23 @@ describe('SelectionOverlay', () => {
     );
 
     expect(document.querySelectorAll('.selection-handle[data-tone="wechat-green"]')).toHaveLength(8);
+    expect(screen.getByTestId('selection-surface'))
+      .toHaveClass('selection-surface--has-selection');
     expect(screen.getByTestId('selection-move-handle')).toHaveTextContent('100 × 80');
     expect(screen.getByTestId('selection-move-handle')).toHaveAttribute('data-placement', 'adaptive');
+  });
+
+  it('uses the full-surface mask class only before a selection exists', () => {
+    render(
+      <SelectionOverlay
+        selection={null}
+        bounds={{ x: 0, y: 0, width: 300, height: 200 }}
+        onSelectionChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('selection-surface'))
+      .not.toHaveClass('selection-surface--has-selection');
   });
 
   it('moves an existing selection without creating a new one', () => {

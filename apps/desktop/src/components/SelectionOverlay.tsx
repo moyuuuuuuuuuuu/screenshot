@@ -25,6 +25,7 @@ export function SelectionOverlay({
 }: SelectionOverlayProps) {
   const dragStart = useRef<Point | null>(null);
   const selectionDrag = useRef<SelectionDrag | null>(null);
+  const hasSelection = Boolean(selection && selection.width > 0 && selection.height > 0);
 
   const updateExistingSelection = (event: PointerEvent<HTMLElement>) => {
     const drag = selectionDrag.current;
@@ -61,7 +62,7 @@ export function SelectionOverlay({
 
   return (
     <div
-      className={`selection-surface${locked ? ' selection-surface--locked' : ''}`}
+      className={`selection-surface${locked ? ' selection-surface--locked' : ''}${hasSelection ? ' selection-surface--has-selection' : ''}`}
       data-testid="selection-surface"
       onPointerDown={(event) => {
         dragStart.current = { x: event.clientX, y: event.clientY };

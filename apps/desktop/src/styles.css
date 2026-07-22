@@ -29,14 +29,15 @@ button { font: inherit; }
 .screenshot-source--long { inset: auto; object-fit: fill; }
 .annotation-canvas { pointer-events: none; touch-action: none; }
 .annotation-canvas--active { pointer-events: auto; cursor: crosshair; }
-.selection-surface { cursor: crosshair; background: rgba(0, 0, 0, 0.34); touch-action: none; }
+.selection-surface { cursor: crosshair; background: rgba(0, 0, 0, 0.3); touch-action: none; }
 .selection-surface--locked { pointer-events: none; }
+.selection-surface--has-selection { background: transparent; }
 
 .selection-box {
   position: absolute;
   border: 1px solid #07c160;
   background: transparent;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.3);
   pointer-events: none;
 }
 

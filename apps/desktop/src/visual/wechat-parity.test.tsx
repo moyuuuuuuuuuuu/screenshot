@@ -35,6 +35,7 @@ describe('WeChat 4.1.11 visual parity contract', () => {
     expect(WECHAT_REFERENCE_METRICS).toMatchObject({
       accent: '#07c160',
       selectionHandle: 6,
+      overlayMaskAlpha: 0.3,
       toolbar: { button: 28, icon: 20, gap: 2, radius: 8, stroke: 1.8 },
     });
     expect(container.querySelectorAll('.wechat-toolbar__button')).toHaveLength(16);

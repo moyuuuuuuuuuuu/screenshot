@@ -2,6 +2,7 @@
 export const WECHAT_REFERENCE_METRICS = Object.freeze({
   accent: '#07c160',
   selectionHandle: 6,
+  overlayMaskAlpha: 0.3,
   toolbar: Object.freeze({
     button: 28,
     icon: 20,
