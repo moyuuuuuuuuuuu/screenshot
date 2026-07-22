@@ -4,10 +4,10 @@ export const WECHAT_REFERENCE_METRICS = Object.freeze({
   selectionHandle: 6,
   toolbar: Object.freeze({
     button: 28,
-    icon: 18,
+    icon: 20,
     gap: 2,
     radius: 8,
-    stroke: 1.6,
+    stroke: 1.8,
   }),
   scrollPreview: Object.freeze({
     rail: 148,

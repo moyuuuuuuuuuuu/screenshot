@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Check, PenLine, Save, X } from 'lucide-react';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
-import { CancelIcon, CompleteIcon, PenIcon, SaveIcon } from './icons/WechatIcons';
 
 function dataUrl(bytes: readonly number[]): string {
   if (!bytes.length) return '';
@@ -25,10 +25,10 @@ export function ScrollCapturePreview({ bridge, side }: Props) {
   const preview = useMemo(() => dataUrl(progress?.previewPngBytes ?? []), [progress?.previewPngBytes]);
   const navigator = useMemo(() => dataUrl(progress?.navigatorPngBytes ?? []), [progress?.navigatorPngBytes]);
   const actions = [
-    { label: '编辑长截图', Icon: PenIcon, action: bridge.editLongCapture },
-    { label: '保存长截图', Icon: SaveIcon, action: bridge.saveLongCapture },
-    { label: '取消长截图', Icon: CancelIcon, action: bridge.cancelLongCapture },
-    { label: '完成长截图', Icon: CompleteIcon, action: bridge.finishLongCapture },
+    { label: '编辑长截图', Icon: PenLine, action: bridge.editLongCapture },
+    { label: '保存长截图', Icon: Save, action: bridge.saveLongCapture },
+    { label: '取消长截图', Icon: X, action: bridge.cancelLongCapture },
+    { label: '完成长截图', Icon: Check, action: bridge.finishLongCapture },
   ] as const;
   return (
     <main className="scroll-preview" data-side={side}>
@@ -44,7 +44,7 @@ export function ScrollCapturePreview({ bridge, side }: Props) {
         {actions.map(({ label, Icon, action }) => (
           <button key={label} type="button" aria-label={label}
             onClick={() => void action()}>
-            <Icon />
+            <Icon size={20} strokeWidth={1.8} aria-hidden="true" />
           </button>
         ))}
       </div>

@@ -35,10 +35,10 @@ describe('WeChat 4.1.11 visual parity contract', () => {
     expect(WECHAT_REFERENCE_METRICS).toMatchObject({
       accent: '#07c160',
       selectionHandle: 6,
-      toolbar: { button: 28, icon: 18, gap: 2, radius: 8, stroke: 1.6 },
+      toolbar: { button: 28, icon: 20, gap: 2, radius: 8, stroke: 1.8 },
     });
     expect(container.querySelectorAll('.wechat-toolbar__button')).toHaveLength(16);
-    expect(container.querySelectorAll('svg[data-stroke="1.6"]')).toHaveLength(16);
+    expect(container.querySelectorAll('svg.lucide[stroke-width="1.8"]')).toHaveLength(16);
   });
 
   it('keeps the initial scrolling state free of counters and empty image placeholders', async () => {

@@ -30,6 +30,12 @@ describe('ScrollCapturePreview', () => {
     expect(screen.getByRole('img', { name: '长截图导航' })).toHaveClass('scroll-preview__navigator');
     expect(screen.getByRole('toolbar', { name: '长截图操作' })).toHaveClass('scroll-preview__actions');
     expect(screen.queryByText(/2400|7 帧/)).not.toBeInTheDocument();
+    for (const icon of document.querySelectorAll('.scroll-preview__actions svg')) {
+      expect(icon).toHaveAttribute('width', '20');
+      expect(icon).toHaveAttribute('height', '20');
+      expect(icon).toHaveAttribute('stroke-width', '1.8');
+      expect(icon).toHaveClass('lucide');
+    }
 
     for (const [name, method] of [
       ['编辑长截图', desktop.editLongCapture],

@@ -9,7 +9,7 @@ const labels = [
 ];
 
 describe('WechatToolbar', () => {
-  it('matches the WeChat 4.1.11 action order and unified icon stroke', () => {
+  it('matches the action order and first-edition Lucide icon contract', () => {
     const { container } = render(
       <WechatToolbar activeAction="rectangle" canUndo={false} onAction={vi.fn()} />,
     );
@@ -18,8 +18,10 @@ describe('WechatToolbar', () => {
       .toEqual(labels);
     expect(container.querySelectorAll('svg')).toHaveLength(labels.length);
     for (const icon of container.querySelectorAll('svg')) {
-      expect(icon).toHaveAttribute('data-stroke', '1.6');
-      expect(icon).toHaveAttribute('viewBox', '0 0 24 24');
+      expect(icon).toHaveAttribute('width', '20');
+      expect(icon).toHaveAttribute('height', '20');
+      expect(icon).toHaveAttribute('stroke-width', '1.8');
+      expect(icon).toHaveClass('lucide');
     }
   });
 

@@ -63,7 +63,7 @@ button { font: inherit; }
 .wechat-toolbar { display: flex; align-items: center; gap: 2px; padding: 7px 9px; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 8px; color: #3e4449; background: #fff; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.24); }
 .wechat-toolbar__item { display: contents; }
 .wechat-toolbar__button { display: grid; width: 28px; height: 28px; padding: 5px; place-items: center; border: 0; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
-.wechat-toolbar__button svg { width: 18px; height: 18px; }
+.wechat-toolbar__button svg { width: 20px; height: 20px; }
 .wechat-toolbar__button:hover:not(:disabled), .wechat-toolbar__button[aria-pressed="true"] { background: #eef0f1; }
 .wechat-toolbar__button:disabled { color: #aeb2b5; cursor: default; }
 .wechat-toolbar__button--danger { color: #ff6268; }
