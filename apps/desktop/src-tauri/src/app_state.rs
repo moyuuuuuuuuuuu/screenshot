@@ -12,7 +12,10 @@ pub struct AppState {
 
 pub fn request_capture(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
-    if !state.begin_capture() {
+    let long_capture_active = app
+        .state::<crate::long_capture::LongCaptureRuntime>()
+        .is_active();
+    if !state.begin_capture_if_long_capture_idle(long_capture_active) {
         return;
     }
 
@@ -20,6 +23,7 @@ pub fn request_capture(app: &tauri::AppHandle) {
         state.finish_capture();
         return;
     };
+    let _ = crate::platform::restore_window_capture(&window);
     let _ = window.emit("capture-started", ());
     if let Err(error) = window.hide() {
         state.finish_capture();
@@ -58,6 +62,10 @@ impl AppState {
             .is_ok()
     }
 
+    pub fn begin_capture_if_long_capture_idle(&self, long_capture_active: bool) -> bool {
+        !long_capture_active && self.begin_capture()
+    }
+
     pub fn finish_capture(&self) {
         self.capture_in_progress.store(false, Ordering::Release);
     }
@@ -83,5 +91,14 @@ mod tests {
         state.finish_capture();
         assert!(!state.is_capturing());
         assert!(state.begin_capture());
+    }
+
+    #[test]
+    fn rejects_capture_while_long_capture_is_active() {
+        let state = AppState::default();
+
+        assert!(!state.begin_capture_if_long_capture_idle(true));
+        assert!(!state.is_capturing());
+        assert!(state.begin_capture_if_long_capture_idle(false));
     }
 }

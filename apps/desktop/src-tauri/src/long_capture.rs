@@ -9,7 +9,9 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::platform::{self, RawMonitorFrame};
-use crate::preview_windows::{open_preview_window, ScreenRect};
+use crate::preview_windows::{
+    open_capture_border_windows, open_preview_window, ScreenRect,
+};
 use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::scroll_motion_tracker::{MotionEstimate, ScrollMotionTracker};
@@ -240,6 +242,10 @@ impl LongCaptureRuntime {
         self.cancel_requested.load(Ordering::Acquire)
     }
 
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
+
     pub fn request_edit(&self) {
         self.action
             .store(LongCaptureAction::Edit.code(), Ordering::Release);
@@ -346,12 +352,31 @@ fn publish_progress(
 }
 
 fn prepare_capture_windows(
-    exclude_overlay: impl FnOnce() -> Result<(), String>,
     open_and_exclude_preview: impl FnOnce() -> Result<(), String>,
+    open_and_exclude_borders: impl FnOnce() -> Result<(), String>,
+    hide_overlay: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    exclude_overlay()?;
     open_and_exclude_preview()?;
+    open_and_exclude_borders()?;
+    hide_overlay()?;
     Ok(())
+}
+
+#[cfg(test)]
+fn run_cleanup_callbacks(
+    cancelled: bool,
+    close_temporary: impl FnOnce(),
+    restore_affinity: impl FnOnce(),
+    reset_session: impl FnOnce(),
+    restore_editor: impl FnOnce(),
+) {
+    close_temporary();
+    restore_affinity();
+    if cancelled {
+        reset_session();
+    } else {
+        restore_editor();
+    }
 }
 
 fn open_controls_window(
@@ -582,21 +607,31 @@ pub async fn start_long_capture(
                     .is_cancel_requested(),
             ) {
                 OverlayCleanup::Restore => {
+                    let _ = platform::restore_window_capture(&restore_window);
                     let _ = restore_app.emit("long-capture-presentation", false);
                     let _ = restore_window.set_ignore_cursor_events(false);
                     let _ = restore_window.show();
                     let _ = restore_window.set_focus();
                 }
                 OverlayCleanup::Hide => {
-                    let _ = restore_window.hide();
+                    let _ = platform::restore_window_capture(&restore_window);
+                    let _ = restore_window.set_ignore_cursor_events(false);
                     let _ = restore_app.emit("capture-session-reset", ());
                     let _ = restore_app.emit("long-capture-presentation", false);
-                    let _ = restore_window.set_ignore_cursor_events(false);
+                    let _ = restore_window.hide();
                 }
             },
             move || {
-                if let Some(controls) = close_app.get_webview_window("scroll-capture-preview") {
-                    let _ = controls.close();
+                for label in [
+                    "scroll-capture-preview",
+                    "scroll-border-top",
+                    "scroll-border-right",
+                    "scroll-border-bottom",
+                    "scroll-border-left",
+                ] {
+                    if let Some(window) = close_app.get_webview_window(label) {
+                        let _ = window.close();
+                    }
                 }
                 if escape_registered {
                     let _ = unregister_app.global_shortcut().unregister("Escape");
@@ -610,16 +645,35 @@ pub async fn start_long_capture(
             .scale_factor()
             .map_err(|error| format!("failed to read overlay scale factor: {error}"))?;
         let region = region.to_physical(origin.x, origin.y, scale_factor);
-        app.emit("long-capture-presentation", true)
-            .map_err(|error| format!("failed to enter capture presentation: {error}"))?;
-        window
-            .set_ignore_cursor_events(true)
-            .map_err(|error| format!("failed to enable overlay pass-through: {error}"))?;
         prepare_capture_windows(
-            || platform::exclude_window_from_capture(&window),
             || {
                 let preview = open_controls_window(&app, region)?;
                 platform::exclude_window_from_capture(&preview)
+            },
+            || {
+                let borders = open_capture_border_windows(
+                    &app,
+                    ScreenRect {
+                        x: region.x.round() as i32,
+                        y: region.y.round() as i32,
+                        width: region.width.round() as i32,
+                        height: region.height.round() as i32,
+                    },
+                )?;
+                for border in &borders {
+                    if let Err(error) = platform::exclude_window_from_capture(border) {
+                        for border in borders {
+                            let _ = border.close();
+                        }
+                        return Err(error);
+                    }
+                }
+                Ok(())
+            },
+            || {
+                window
+                    .hide()
+                    .map_err(|error| format!("failed to hide overlay for long capture: {error}"))
             },
         )?;
         std::thread::sleep(Duration::from_millis(150));
@@ -666,8 +720,8 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        crop_region, overlay_cleanup, prepare_capture_windows, termination, CaptureCleanup,
-        CaptureRegion, CaptureTermination, OverlayCleanup,
+        crop_region, overlay_cleanup, prepare_capture_windows, run_cleanup_callbacks, termination,
+        CaptureCleanup, CaptureRegion, CaptureTermination, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
     use std::{cell::RefCell, rc::Rc};
@@ -686,45 +740,58 @@ mod tests {
     }
 
     #[test]
-    fn prepare_capture_windows_excludes_overlay_before_preview() {
+    fn preparation_finishes_temporary_windows_before_hiding_overlay() {
         let events = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let overlay_events = events.clone();
         let preview_events = events.clone();
+        let border_events = events.clone();
+        let overlay_events = events.clone();
 
         prepare_capture_windows(
             || {
-                overlay_events.borrow_mut().push("overlay");
+                preview_events.borrow_mut().push("preview");
                 Ok(())
             },
             || {
-                preview_events.borrow_mut().push("preview");
+                border_events.borrow_mut().push("borders");
+                Ok(())
+            },
+            || {
+                overlay_events.borrow_mut().push("hide-overlay");
                 Ok(())
             },
         )
         .unwrap();
 
-        assert_eq!(*events.borrow(), vec!["overlay", "preview"]);
+        assert_eq!(
+            *events.borrow(),
+            vec!["preview", "borders", "hide-overlay"]
+        );
     }
 
     #[test]
-    fn prepare_capture_windows_does_not_open_preview_when_overlay_exclusion_fails() {
+    fn preparation_does_not_hide_overlay_when_border_creation_fails() {
         let events = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let overlay_events = events.clone();
         let preview_events = events.clone();
+        let border_events = events.clone();
+        let overlay_events = events.clone();
 
         let result = prepare_capture_windows(
-            || {
-                overlay_events.borrow_mut().push("overlay");
-                Err("overlay exclusion failed".to_string())
-            },
             || {
                 preview_events.borrow_mut().push("preview");
                 Ok(())
             },
+            || {
+                border_events.borrow_mut().push("borders");
+                Err("border creation failed".to_string())
+            },
+            || {
+                overlay_events.borrow_mut().push("hide-overlay");
+                Ok(())
+            },
         );
 
-        assert_eq!(result.unwrap_err(), "overlay exclusion failed");
-        assert_eq!(*events.borrow(), vec!["overlay"]);
+        assert_eq!(result.unwrap_err(), "border creation failed");
+        assert_eq!(*events.borrow(), vec!["preview", "borders"]);
     }
 
     #[test]
@@ -746,6 +813,28 @@ mod tests {
             );
         }
         assert_eq!(*events.borrow(), vec!["controls", "overlay"]);
+    }
+
+    #[test]
+    fn cancelled_cleanup_closes_temporary_windows_before_reset() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let close_events = Rc::clone(&events);
+        let affinity_events = Rc::clone(&events);
+        let reset_events = Rc::clone(&events);
+        let restore_events = Rc::clone(&events);
+
+        run_cleanup_callbacks(
+            true,
+            move || close_events.borrow_mut().push("close-temporary"),
+            move || affinity_events.borrow_mut().push("restore-affinity"),
+            move || reset_events.borrow_mut().push("reset-session"),
+            move || restore_events.borrow_mut().push("restore-editor"),
+        );
+
+        assert_eq!(
+            *events.borrow(),
+            vec!["close-temporary", "restore-affinity", "reset-session"]
+        );
     }
 
     #[test]
