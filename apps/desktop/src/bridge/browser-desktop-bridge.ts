@@ -67,10 +67,14 @@ export function createBrowserDesktopBridge(
       const storage = dependencies.storage ?? window.localStorage;
       return readBrowserSettings(storage);
     },
-    async updateSettings(settings) {
+    async updateShortcut(shortcut) {
       const storage = dependencies.storage ?? window.localStorage;
-      storage.setItem(settingsStorageKey, JSON.stringify(settings));
-      return settings;
+      const nextSettings = {
+        ...readBrowserSettings(storage),
+        shortcut,
+      };
+      storage.setItem(settingsStorageKey, JSON.stringify(nextSettings));
+      return nextSettings;
     },
     async updateCloudPrivacyAcknowledgement(acknowledged) {
       const storage = dependencies.storage ?? window.localStorage;

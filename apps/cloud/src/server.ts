@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import sharp from 'sharp';
 
@@ -65,6 +66,7 @@ export type ServerOptions = Readonly<{
   clock?: () => number;
   auditLogger?: AuditLogger;
   requestIdFactory?: () => string;
+  allowedOrigins?: readonly string[];
 }>;
 
 type ServerDependencies = Readonly<{
@@ -85,6 +87,7 @@ export type CloudProviderEnvironment = Readonly<{
   COZE_API_BASE_URL?: string;
   COZE_API_TOKEN?: string;
   COZE_WORKFLOW_ID?: string;
+  CORS_ALLOWED_ORIGINS?: string;
 }>;
 
 export function createProviderFromEnvironment(
@@ -136,6 +139,20 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   const app = Fastify({
     bodyLimit: parserBodyLimit,
     genReqId: () => options.requestIdFactory?.() ?? randomUUID(),
+  });
+
+  void app.register(cors, {
+    origin: [...(options.allowedOrigins ?? [])],
+    methods: ['GET', 'POST'],
+    allowedHeaders: [
+      'content-type',
+      'x-device-id',
+      'x-request-timestamp',
+      'x-request-signature',
+    ],
+    credentials: false,
+    maxAge: 600,
+    strictPreflight: true,
   });
 
   app.removeContentTypeParser('application/json');

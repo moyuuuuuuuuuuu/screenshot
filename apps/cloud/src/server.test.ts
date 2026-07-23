@@ -109,6 +109,92 @@ describe('server configuration', () => {
   });
 });
 
+describe('desktop CORS boundary', () => {
+  it.each([
+    {
+      url: '/v1/ocr',
+      method: 'POST',
+      requestedHeaders:
+        'content-type,x-device-id,x-request-timestamp,x-request-signature',
+    },
+    {
+      url: '/v1/quota',
+      method: 'GET',
+      requestedHeaders:
+        'x-device-id,x-request-timestamp,x-request-signature',
+    },
+  ])(
+    'accepts the signed $method $url preflight from an allowed desktop origin',
+    async ({ url, method, requestedHeaders }) => {
+      const { app, recognize, consume, status } = createHarness({
+        allowedOrigins: ['http://tauri.localhost'],
+      });
+
+      const response = await app.inject({
+        method: 'OPTIONS',
+        url,
+        headers: {
+          origin: 'http://tauri.localhost',
+          'access-control-request-method': method,
+          'access-control-request-headers': requestedHeaders,
+        },
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['access-control-allow-origin'])
+        .toBe('http://tauri.localhost');
+      expect(response.headers['access-control-allow-methods']).toContain(method);
+      expect(response.headers['access-control-allow-headers'])
+        .toBe('content-type, x-device-id, x-request-timestamp, x-request-signature');
+      expect(response.headers.vary).toContain('Origin');
+      expect(recognize).not.toHaveBeenCalled();
+      expect(consume).not.toHaveBeenCalled();
+      expect(status).not.toHaveBeenCalled();
+
+      await app.close();
+    },
+  );
+
+  it('adds the exact allowed origin to successful API responses', async () => {
+    const { app } = createHarness({
+      allowedOrigins: ['http://tauri.localhost'],
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ocr',
+      headers: {
+        ...signedHeaders('ocr'),
+        origin: 'http://tauri.localhost',
+      },
+      payload: png,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['access-control-allow-origin'])
+      .toBe('http://tauri.localhost');
+    await app.close();
+  });
+
+  it('does not grant CORS access to an unlisted web origin', async () => {
+    const { app } = createHarness({
+      allowedOrigins: ['http://tauri.localhost'],
+    });
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/ocr',
+      headers: {
+        origin: 'https://untrusted.example',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers':
+          'content-type,x-device-id,x-request-timestamp,x-request-signature',
+      },
+    });
+
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+    await app.close();
+  });
+});
+
 describe('cloud OCR and translation API', () => {
   it('returns an OCR result for a fresh signed PNG request', async () => {
     const { app, recognize, consume } = createHarness();

@@ -28,7 +28,7 @@ describe('SettingsPanel', () => {
     expect(recorder).toHaveTextContent('Alt+Shift+A');
   });
 
-  it('contains no Coze token or workflow controls and preserves privacy state on save', async () => {
+  it('contains no Coze token or workflow controls and saves only the shortcut', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(
       <SettingsPanel
@@ -47,9 +47,6 @@ describe('SettingsPanel', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '保存设置' }));
-    expect(onSave).toHaveBeenCalledWith({
-      shortcut: 'Alt+Shift+A',
-      cloudPrivacyAcknowledged: true,
-    });
+    expect(onSave).toHaveBeenCalledWith('Alt+Shift+A');
   });
 });

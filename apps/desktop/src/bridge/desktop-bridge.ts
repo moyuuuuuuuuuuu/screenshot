@@ -43,7 +43,7 @@ export interface DesktopBridge {
   getLongCaptureProgress(): Promise<LongCaptureProgress>;
   getCloudDeviceId(): Promise<string>;
   loadSettings(): Promise<AppSettings>;
-  updateSettings(settings: AppSettings): Promise<AppSettings>;
+  updateShortcut(shortcut: string): Promise<AppSettings>;
   updateCloudPrivacyAcknowledgement(acknowledged: boolean): Promise<AppSettings>;
   pinPng(blob: Blob, bounds: Rect): Promise<string>;
   sharePng(blob: Blob): Promise<ShareOutcome>;

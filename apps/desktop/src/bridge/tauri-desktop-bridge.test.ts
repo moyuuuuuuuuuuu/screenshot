@@ -117,25 +117,28 @@ describe('createTauriDesktopBridge', () => {
     expect(invoke).toHaveBeenCalledWith('long_capture_progress');
   });
 
-  it('loads and updates shortcut and privacy acknowledgement through native commands', async () => {
-    const settings = {
+  it('updates only the shortcut and keeps the latest native privacy acknowledgement', async () => {
+    const staleSettings = {
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: false,
+    };
+    const currentSettings = {
       shortcut: 'Ctrl+Alt+X',
       cloudPrivacyAcknowledged: true,
     };
     const invoke = vi.fn()
-      .mockResolvedValueOnce(settings)
-      .mockResolvedValueOnce(settings)
-      .mockResolvedValueOnce(settings);
+      .mockResolvedValueOnce(staleSettings)
+      .mockResolvedValueOnce(currentSettings);
     const bridge = createTauriDesktopBridge(invoke);
 
-    await expect(bridge.loadSettings()).resolves.toEqual(settings);
-    await expect(bridge.updateSettings(settings)).resolves.toEqual(settings);
+    await expect(bridge.loadSettings()).resolves.toEqual(staleSettings);
+    await expect(bridge.updateShortcut(staleSettings.shortcut)).resolves.toEqual(currentSettings);
     expect(invoke).toHaveBeenNthCalledWith(1, 'load_settings');
     expect(invoke).toHaveBeenNthCalledWith(2, 'update_shortcut', { shortcut: 'Ctrl+Alt+X' });
-    expect(invoke).toHaveBeenNthCalledWith(
-      3,
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).not.toHaveBeenCalledWith(
       'update_cloud_privacy_acknowledgement',
-      { acknowledged: true },
+      expect.anything(),
     );
   });
 

@@ -43,7 +43,10 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
       shortcut: 'Alt+Shift+A',
       cloudPrivacyAcknowledged: true,
     }),
-    updateSettings: vi.fn(async (settings) => settings),
+    updateShortcut: vi.fn(async (shortcut) => ({
+      shortcut,
+      cloudPrivacyAcknowledged: true,
+    })),
     updateCloudPrivacyAcknowledgement: vi.fn(async (acknowledged) => ({
       shortcut: 'Alt+Shift+A',
       cloudPrivacyAcknowledged: acknowledged,
@@ -286,7 +289,7 @@ describe('ScreenshotEditor', () => {
   );
 
   it('cancels with zero uploads, then accepts and remembers the privacy acknowledgement', async () => {
-    const updateSettings = vi.fn(async (settings) => settings);
+    const updateShortcut = vi.fn();
     const updateCloudPrivacyAcknowledgement = vi.fn().mockResolvedValue({
       shortcut: 'Ctrl+Alt+X',
       cloudPrivacyAcknowledged: true,
@@ -296,7 +299,7 @@ describe('ScreenshotEditor', () => {
         shortcut: 'Ctrl+Alt+X',
         cloudPrivacyAcknowledged: false,
       }),
-      updateSettings,
+      updateShortcut,
       updateCloudPrivacyAcknowledgement,
     });
     const client = createFakeCloudClient();
@@ -319,7 +322,7 @@ describe('ScreenshotEditor', () => {
     await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
     await userEvent.click(await screen.findByRole('button', { name: '同意并继续' }));
     expect(updateCloudPrivacyAcknowledgement).toHaveBeenCalledWith(true);
-    expect(updateSettings).not.toHaveBeenCalled();
+    expect(updateShortcut).not.toHaveBeenCalled();
     await screen.findByLabelText('识别原文');
     expect(client.recognize).toHaveBeenCalledOnce();
 

@@ -17,7 +17,7 @@ function shortcutFromEvent(event: React.KeyboardEvent): string | null {
 
 type SettingsPanelProps = Readonly<{
   initialSettings: AppSettings;
-  onSave(settings: AppSettings): Promise<void>;
+  onSave(shortcut: string): Promise<void>;
   onClose(): void;
 }>;
 
@@ -28,7 +28,7 @@ export function SettingsPanel({ initialSettings, onSave, onClose }: SettingsPane
   const save = async () => {
     try {
       setError(null);
-      await onSave(settings);
+      await onSave(settings.shortcut);
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存设置失败');

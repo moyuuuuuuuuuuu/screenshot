@@ -87,6 +87,7 @@ CLOUD_PROVIDER=coze
 HOST=127.0.0.1
 PORT=3000
 REQUEST_SIGNING_SECRET=<strong server-side signing secret>
+CORS_ALLOWED_ORIGINS=http://tauri.localhost,https://tauri.localhost,tauri://localhost
 COZE_API_BASE_URL=https://api.coze.cn
 COZE_API_TOKEN=<Coze PAT>
 COZE_WORKFLOW_ID=<published workflow ID>
@@ -95,6 +96,14 @@ COZE_WORKFLOW_ID=<published workflow ID>
 `COZE_API_BASE_URL`, `COZE_API_TOKEN`, and `COZE_WORKFLOW_ID` are all required
 when `CLOUD_PROVIDER=coze`. Production refuses every provider except `coze`.
 Development and tests may use `CLOUD_PROVIDER=mock`.
+
+`CORS_ALLOWED_ORIGINS` is an exact, comma-separated allowlist for the desktop
+WebView. Keep only the origins used by released clients. Windows Tauri 2 uses
+`http://tauri.localhost` by default; `https://tauri.localhost` covers builds
+that enable Tauri's HTTPS scheme, and `tauri://localhost` covers the custom
+scheme used on other platforms. For local Vite development, add
+`http://localhost:1420` or `http://127.0.0.1:1420`. Wildcards, paths, and
+malformed origins are rejected at startup.
 
 `HOST` defaults to `127.0.0.1` and `PORT` defaults to `3000`. Set `HOST=0.0.0.0`
 only when the deployment platform requires the process to accept external

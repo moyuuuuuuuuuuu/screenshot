@@ -53,7 +53,7 @@ describe('browser desktop bridge', () => {
     );
   });
 
-  it('persists only shortcut and cloud privacy acknowledgement in browser settings', async () => {
+  it('updates only the shortcut and preserves the latest browser privacy acknowledgement', async () => {
     const values = new Map<string, string>();
     const storage = {
       getItem: vi.fn((key: string) => values.get(key) ?? null),
@@ -70,10 +70,8 @@ describe('browser desktop bridge', () => {
       shortcut: 'Alt+Shift+A',
       cloudPrivacyAcknowledged: false,
     });
-    await expect(bridge.updateSettings({
-      shortcut: 'Ctrl+Alt+X',
-      cloudPrivacyAcknowledged: true,
-    })).resolves.toEqual({
+    await bridge.updateCloudPrivacyAcknowledgement(true);
+    await expect(bridge.updateShortcut('Ctrl+Alt+X')).resolves.toEqual({
       shortcut: 'Ctrl+Alt+X',
       cloudPrivacyAcknowledged: true,
     });
@@ -96,10 +94,7 @@ describe('browser desktop bridge', () => {
       close: vi.fn(),
       storage,
     });
-    await bridge.updateSettings({
-      shortcut: 'Ctrl+Alt+X',
-      cloudPrivacyAcknowledged: false,
-    });
+    await bridge.updateShortcut('Ctrl+Alt+X');
 
     await expect(bridge.updateCloudPrivacyAcknowledgement(true)).resolves.toEqual({
       shortcut: 'Ctrl+Alt+X',

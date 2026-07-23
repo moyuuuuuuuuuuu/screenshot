@@ -138,10 +138,9 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     async loadSettings() {
       return parseSettings(await invoke('load_settings'));
     },
-    async updateSettings(settings) {
-      await invoke('update_shortcut', { shortcut: settings.shortcut });
-      return parseSettings(await invoke('update_cloud_privacy_acknowledgement', {
-        acknowledged: settings.cloudPrivacyAcknowledged,
+    async updateShortcut(shortcut) {
+      return parseSettings(await invoke('update_shortcut', {
+        shortcut,
       }));
     },
     async updateCloudPrivacyAcknowledgement(acknowledged) {

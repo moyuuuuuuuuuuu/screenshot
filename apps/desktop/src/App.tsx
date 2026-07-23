@@ -138,8 +138,8 @@ export function App() {
         <SettingsPanel
           initialSettings={settings}
           onClose={() => setSettings(null)}
-          onSave={async (nextSettings) => {
-            setSettings(await desktopBridge.updateSettings(nextSettings));
+          onSave={async (shortcut) => {
+            setSettings(await desktopBridge.updateShortcut(shortcut));
           }}
         />
       ) : null}

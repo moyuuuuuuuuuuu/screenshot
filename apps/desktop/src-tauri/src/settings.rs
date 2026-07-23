@@ -54,6 +54,16 @@ impl SettingsState {
             .map(|settings| settings.clone())
             .map_err(|_| "settings lock poisoned".to_string())
     }
+
+    fn update(
+        &self,
+        mutation: impl FnOnce(&AppSettings) -> Result<AppSettings, String>,
+    ) -> Result<AppSettings, String> {
+        let mut settings = self.0.lock().map_err(|_| "settings lock poisoned")?;
+        let next = mutation(&settings)?;
+        *settings = next.clone();
+        Ok(next)
+    }
 }
 
 fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -138,13 +148,14 @@ pub fn update_shortcut(
     if candidate.is_empty() || !candidate.contains('+') {
         return Err("请录制包含修饰键的快捷键".to_string());
     }
-    let mut settings = state.snapshot()?;
     let mut registrar = crate::hotkey::TauriShortcutRegistrar(&app);
-    crate::hotkey::replace_shortcut(&mut registrar, &settings.shortcut, candidate)?;
-    settings.shortcut = candidate.to_string();
-    persist_settings(&app, &settings)?;
-    state.replace(settings.clone())?;
-    Ok(settings)
+    state.update(|settings| {
+        let mut next = settings.clone();
+        crate::hotkey::replace_shortcut(&mut registrar, &next.shortcut, candidate)?;
+        next.shortcut = candidate.to_string();
+        persist_settings(&app, &next)?;
+        Ok(next)
+    })
 }
 
 #[tauri::command]
@@ -153,17 +164,20 @@ pub fn update_cloud_privacy_acknowledgement(
     state: State<'_, SettingsState>,
     acknowledged: bool,
 ) -> Result<AppSettings, String> {
-    let mut settings = state.snapshot()?;
-    settings.cloud_privacy_acknowledged = acknowledged;
-    persist_settings(&app, &settings)?;
-    state.replace(settings.clone())?;
-    Ok(settings)
+    state.update(|settings| {
+        let mut next = settings.clone();
+        next.cloud_privacy_acknowledged = acknowledged;
+        persist_settings(&app, &next)?;
+        Ok(next)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::fs;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[test]
     fn defaults_to_the_approved_shortcut_without_cloud_acknowledgement() {
@@ -263,6 +277,48 @@ mod tests {
         assert_eq!(message, super::SETTINGS_LOAD_ERROR_MESSAGE);
         assert!(!message.contains("legacy-sensitive-token"));
         assert!(!message.contains("legacy-sensitive-workflow"));
+    }
+
+    #[test]
+    fn concurrent_field_updates_merge_instead_of_overwriting_each_other() {
+        let state = Arc::new(super::SettingsState::default());
+        let start = Arc::new(Barrier::new(3));
+
+        let shortcut_state = Arc::clone(&state);
+        let shortcut_start = Arc::clone(&start);
+        let shortcut = thread::spawn(move || {
+            shortcut_start.wait();
+            shortcut_state.update(|current| {
+                let mut next = current.clone();
+                next.shortcut = "Ctrl+Alt+X".to_string();
+                Ok(next)
+            })
+        });
+
+        let privacy_state = Arc::clone(&state);
+        let privacy_start = Arc::clone(&start);
+        let privacy = thread::spawn(move || {
+            privacy_start.wait();
+            privacy_state.update(|current| {
+                let mut next = current.clone();
+                next.cloud_privacy_acknowledged = true;
+                Ok(next)
+            })
+        });
+
+        start.wait();
+        shortcut
+            .join()
+            .expect("shortcut thread")
+            .expect("shortcut update");
+        privacy
+            .join()
+            .expect("privacy thread")
+            .expect("privacy update");
+
+        let final_settings = state.snapshot().expect("settings snapshot");
+        assert_eq!(final_settings.shortcut, "Ctrl+Alt+X");
+        assert!(final_settings.cloud_privacy_acknowledged);
     }
 
     fn temporary_settings_path(label: &str) -> std::path::PathBuf {

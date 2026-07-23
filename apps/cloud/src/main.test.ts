@@ -25,6 +25,13 @@ describe('cloud runtime configuration', () => {
     expect(configuration.serverOptions).toEqual({
       signingSecret: 'server-only-signing-secret',
       environment: developmentEnvironment,
+      allowedOrigins: [
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+        'tauri://localhost',
+        'http://localhost:1420',
+        'http://127.0.0.1:1420',
+      ],
     });
   });
 
@@ -40,6 +47,38 @@ describe('cloud runtime configuration', () => {
       port: 8080,
     });
   });
+
+  it('reads a strict comma-separated desktop origin allowlist', () => {
+    const environment: CloudRuntimeEnvironment = {
+      ...developmentEnvironment,
+      CORS_ALLOWED_ORIGINS:
+        ' http://tauri.localhost, http://localhost:1420, http://tauri.localhost ',
+    };
+
+    expect(readCloudRuntimeConfiguration(environment).serverOptions.allowedOrigins)
+      .toEqual(['http://tauri.localhost', 'http://localhost:1420']);
+  });
+
+  it('uses desktop production and development origins by default', () => {
+    expect(readCloudRuntimeConfiguration(developmentEnvironment).serverOptions.allowedOrigins)
+      .toEqual([
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+        'tauri://localhost',
+        'http://localhost:1420',
+        'http://127.0.0.1:1420',
+      ]);
+  });
+
+  it.each(['*', 'http://tauri.localhost/path', 'not-an-origin'])(
+    'rejects unsafe CORS origin %s',
+    (origin) => {
+      expect(() => readCloudRuntimeConfiguration({
+        ...developmentEnvironment,
+        CORS_ALLOWED_ORIGINS: origin,
+      })).toThrow('CORS_ALLOWED_ORIGINS contains an invalid origin.');
+    },
+  );
 
   it.each(['not-a-number', '12.5', '-1', '65536'])(
     'rejects invalid PORT value %s',
@@ -65,6 +104,13 @@ describe('cloud runtime startup', () => {
       serverOptions: {
         signingSecret: 'server-only-signing-secret',
         environment: developmentEnvironment,
+        allowedOrigins: [
+          'http://tauri.localhost',
+          'https://tauri.localhost',
+          'tauri://localhost',
+          'http://localhost:1420',
+          'http://127.0.0.1:1420',
+        ],
       },
       listenOptions: {
         host: '127.0.0.1',

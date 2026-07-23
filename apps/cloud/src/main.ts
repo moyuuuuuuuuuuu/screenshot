@@ -6,6 +6,13 @@ import { buildServer } from './server.js';
 const defaultHost = '127.0.0.1';
 const defaultPort = 3000;
 const startupErrorMessage = 'Cloud server failed to start.';
+const defaultAllowedOrigins = [
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'tauri://localhost',
+  'http://localhost:1420',
+  'http://127.0.0.1:1420',
+] as const;
 
 export type CloudRuntimeEnvironment = CloudProviderEnvironment &
   Readonly<{
@@ -47,9 +54,41 @@ export function readCloudRuntimeConfiguration(
     serverOptions: {
       signingSecret: environment.REQUEST_SIGNING_SECRET ?? '',
       environment,
+      allowedOrigins: readAllowedOrigins(environment.CORS_ALLOWED_ORIGINS),
     },
     listenOptions: { host, port },
   };
+}
+
+function readAllowedOrigins(value: string | undefined): readonly string[] {
+  if (value === undefined || value.trim().length === 0) {
+    return [...defaultAllowedOrigins];
+  }
+  const origins = [...new Set(
+    value
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0),
+  )];
+  if (origins.length === 0 || origins.some((origin) => !isExactDesktopOrigin(origin))) {
+    throw new Error('CORS_ALLOWED_ORIGINS contains an invalid origin.');
+  }
+  return origins;
+}
+
+function isExactDesktopOrigin(origin: string): boolean {
+  if (origin === 'tauri://localhost') return true;
+  try {
+    const parsed = new URL(origin);
+    return (
+      ['http:', 'https:'].includes(parsed.protocol)
+      && parsed.origin === origin
+      && parsed.username.length === 0
+      && parsed.password.length === 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function startCloudServer(
