@@ -7,6 +7,8 @@ import { ScrollCapturePreview } from './ScrollCapturePreview';
 function bridge(): DesktopBridge {
   return {
     getLongCaptureProgress: vi.fn().mockResolvedValue({
+      sessionId: 1,
+      revision: 2,
       frameCount: 7,
       stitchedHeight: 2400,
       state: 'observing',

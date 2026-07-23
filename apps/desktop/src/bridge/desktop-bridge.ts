@@ -1,6 +1,8 @@
 import type { Rect } from '../domain/geometry';
 
 export type LongCaptureProgress = Readonly<{
+  sessionId: number;
+  revision: number;
   frameCount: number;
   stitchedHeight: number;
   state: 'preparing' | 'observing' | 'scrolling' | 'stabilizing' | 'matching'
@@ -10,6 +12,13 @@ export type LongCaptureProgress = Readonly<{
   acceptedBounds: Rect | null;
   warning: boolean;
   slowScrollWarning: boolean;
+}>;
+
+export type LongCaptureTerminalAction = 'edit' | 'save' | 'cancel' | 'finish';
+export type LongCaptureTerminalOutcome = Readonly<{
+  sessionId: number;
+  action: LongCaptureTerminalAction;
+  status: 'accepted' | 'alreadyTerminating' | 'stale';
 }>;
 
 export type LongCaptureResult = Readonly<{
@@ -40,6 +49,10 @@ export interface DesktopBridge {
   saveLongCapture(): Promise<void>;
   finishLongCapture(): Promise<void>;
   cancelLongCapture(): Promise<void>;
+  requestLongCaptureTerminal(
+    sessionId: number,
+    action: LongCaptureTerminalAction,
+  ): Promise<LongCaptureTerminalOutcome>;
   getLongCaptureProgress(): Promise<LongCaptureProgress>;
   getCloudDeviceId(): Promise<string>;
   loadSettings(): Promise<AppSettings>;

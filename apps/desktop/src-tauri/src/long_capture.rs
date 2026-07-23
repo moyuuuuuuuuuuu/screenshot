@@ -77,7 +77,7 @@ struct AcceptedBounds {
     height: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LongCaptureAction {
     None,
@@ -1180,6 +1180,26 @@ pub fn cancel_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
     runtime.request_cancel();
 }
 
+fn request_long_capture_terminal_inner(
+    runtime: &LongCaptureRuntime,
+    session_id: u64,
+    action: LongCaptureAction,
+) -> Result<TerminalRequestOutcome, String> {
+    if action == LongCaptureAction::None {
+        return Err("long capture terminal action cannot be none".to_string());
+    }
+    Ok(runtime.request_terminal(session_id, action))
+}
+
+#[tauri::command]
+pub fn request_long_capture_terminal(
+    runtime: tauri::State<'_, LongCaptureRuntime>,
+    session_id: u64,
+    action: LongCaptureAction,
+) -> Result<TerminalRequestOutcome, String> {
+    request_long_capture_terminal_inner(&runtime, session_id, action)
+}
+
 #[tauri::command]
 pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> LongCaptureProgress {
     runtime
@@ -1549,6 +1569,48 @@ mod tests {
             super::TerminalRequestStatus::AlreadyTerminating
         );
         assert_eq!(duplicate.action, LongCaptureAction::Finish);
+    }
+
+    #[test]
+    fn public_terminal_request_rejects_none_without_mutating_runtime() {
+        let runtime = super::LongCaptureRuntime::default();
+        let session_id = runtime.begin().unwrap();
+
+        let result = super::request_long_capture_terminal_inner(
+            &runtime,
+            session_id,
+            LongCaptureAction::None,
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "long capture terminal action cannot be none"
+        );
+        assert_eq!(runtime.requested_action(), LongCaptureAction::None);
+        assert!(!runtime
+            .stop_requested
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert!(!runtime.is_cancel_requested());
+    }
+
+    #[test]
+    fn public_terminal_request_preserves_legal_runtime_outcomes() {
+        for action in [
+            LongCaptureAction::Edit,
+            LongCaptureAction::Save,
+            LongCaptureAction::Cancel,
+            LongCaptureAction::Finish,
+        ] {
+            let runtime = super::LongCaptureRuntime::default();
+            let session_id = runtime.begin().unwrap();
+
+            let outcome =
+                super::request_long_capture_terminal_inner(&runtime, session_id, action).unwrap();
+
+            assert_eq!(outcome.session_id, session_id);
+            assert_eq!(outcome.action, action);
+            assert_eq!(outcome.status, super::TerminalRequestStatus::Accepted);
+        }
     }
 
     #[test]

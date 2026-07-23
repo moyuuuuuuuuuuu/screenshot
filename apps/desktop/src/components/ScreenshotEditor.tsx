@@ -338,6 +338,8 @@ export function ScreenshotEditor({
     dispatchCapture({ type: 'scrollStarted' });
     setError(null);
     setLongCaptureProgress({
+      sessionId: 0,
+      revision: 0,
       frameCount: 0,
       stitchedHeight: 0,
       state: 'preparing',

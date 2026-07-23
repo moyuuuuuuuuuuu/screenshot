@@ -16,6 +16,8 @@ function previewBridge(progress: LongCaptureProgress): DesktopBridge {
 }
 
 const baseProgress: LongCaptureProgress = {
+  sessionId: 1,
+  revision: 1,
   frameCount: 1,
   stitchedHeight: 720,
   state: 'observing',

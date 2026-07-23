@@ -70,6 +70,7 @@ fn main() {
             screenshot_tool::long_capture::save_long_capture,
             screenshot_tool::long_capture::finish_long_capture,
             screenshot_tool::long_capture::cancel_long_capture,
+            screenshot_tool::long_capture::request_long_capture_terminal,
             screenshot_tool::long_capture::long_capture_progress,
             screenshot_tool::settings::load_settings,
             screenshot_tool::settings::update_shortcut,

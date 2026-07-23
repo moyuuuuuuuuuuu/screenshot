@@ -76,6 +76,8 @@ describe('createTauriDesktopBridge', () => {
     expect(result.clipboardError).toBe('clipboard busy');
     expect(result.png).toMatchObject({ size: 3, type: 'image/png' });
     expect(progress).toHaveBeenCalledWith({
+      sessionId: 0,
+      revision: 0,
       frameCount: 0,
       stitchedHeight: 0,
       state: 'preparing',
@@ -85,6 +87,50 @@ describe('createTauriDesktopBridge', () => {
       warning: false,
       slowScrollWarning: false,
     });
+  });
+
+  it('submits a session-scoped long capture terminal action', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      sessionId: 17,
+      action: 'finish',
+      status: 'accepted',
+    });
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.requestLongCaptureTerminal(17, 'finish')).resolves.toEqual({
+      sessionId: 17,
+      action: 'finish',
+      status: 'accepted',
+    });
+    expect(invoke).toHaveBeenCalledWith('request_long_capture_terminal', {
+      sessionId: 17,
+      action: 'finish',
+    });
+  });
+
+  it('rejects an invalid terminal response', async () => {
+    const bridge = createTauriDesktopBridge(
+      vi.fn().mockResolvedValue({ sessionId: 17, action: 'finish', status: 'unknown' }),
+    );
+
+    await expect(bridge.requestLongCaptureTerminal(17, 'finish'))
+      .rejects.toThrow('invalid long capture terminal response');
+  });
+
+  it.each([
+    [0, 'finish'],
+    [-1, 'finish'],
+    [1.5, 'finish'],
+    [17, 'none'],
+  ] as const)('rejects invalid terminal request input (%s, %s)', async (sessionId, action) => {
+    const invoke = vi.fn();
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.requestLongCaptureTerminal(
+      sessionId,
+      action as 'finish',
+    )).rejects.toThrow('invalid long capture terminal request');
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('rejects an impossible Finish result carrying a clipboard error', async () => {
@@ -101,6 +147,8 @@ describe('createTauriDesktopBridge', () => {
 
   it('reads expanded long capture progress', async () => {
     const progress = {
+      sessionId: 17,
+      revision: 3,
       frameCount: 4,
       stitchedHeight: 1600,
       state: 'observing',
@@ -115,6 +163,26 @@ describe('createTauriDesktopBridge', () => {
 
     await expect(bridge.getLongCaptureProgress()).resolves.toEqual(progress);
     expect(invoke).toHaveBeenCalledWith('long_capture_progress');
+  });
+
+  it.each([
+    { missingField: { revision: 3 }, fieldName: 'sessionId' },
+    { missingField: { sessionId: 17 }, fieldName: 'revision' },
+  ] as const)('rejects long capture progress without $fieldName', async ({ missingField }) => {
+    const bridge = createTauriDesktopBridge(vi.fn().mockResolvedValue({
+      ...missingField,
+      frameCount: 4,
+      stitchedHeight: 1600,
+      state: 'observing',
+      previewPngBytes: [],
+      navigatorPngBytes: [],
+      acceptedBounds: null,
+      warning: false,
+      slowScrollWarning: false,
+    }));
+
+    await expect(bridge.getLongCaptureProgress())
+      .rejects.toThrow('invalid long capture progress');
   });
 
   it('updates only the shortcut and keeps the latest native privacy acknowledgement', async () => {

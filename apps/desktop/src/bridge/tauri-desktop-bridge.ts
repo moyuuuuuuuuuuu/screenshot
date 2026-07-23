@@ -1,5 +1,10 @@
 import type { DesktopBridge } from './desktop-bridge';
-import type { LongCaptureProgress, LongCaptureResult } from './desktop-bridge';
+import type {
+  LongCaptureProgress,
+  LongCaptureResult,
+  LongCaptureTerminalAction,
+  LongCaptureTerminalOutcome,
+} from './desktop-bridge';
 import type { AppSettings } from './desktop-bridge';
 
 export type TauriInvoke = (
@@ -11,6 +16,12 @@ const progressStates = new Set<LongCaptureProgress['state']>([
   'preparing', 'observing', 'scrolling', 'stabilizing', 'matching',
   'pausedReverse', 'warning', 'completed', 'partial', 'cancelled', 'failed',
 ]);
+const terminalActions = new Set<LongCaptureTerminalAction>([
+  'edit', 'save', 'cancel', 'finish',
+]);
+const terminalStatuses = new Set<LongCaptureTerminalOutcome['status']>([
+  'accepted', 'alreadyTerminating', 'stale',
+]);
 const lowercaseUuidV4Pattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -18,7 +29,11 @@ function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
   if (!value || typeof value !== 'object') throw new Error('invalid long capture progress');
   const progress = value as Record<string, unknown>;
   if (
-    typeof progress.frameCount !== 'number'
+    !Number.isSafeInteger(progress.sessionId)
+    || (progress.sessionId as number) < 0
+    || !Number.isSafeInteger(progress.revision)
+    || (progress.revision as number) < 0
+    || typeof progress.frameCount !== 'number'
     || typeof progress.stitchedHeight !== 'number'
     || !progressStates.has(progress.state as LongCaptureProgress['state'])
     || !Array.isArray(progress.previewPngBytes)
@@ -27,6 +42,24 @@ function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
     || typeof progress.slowScrollWarning !== 'boolean'
   ) throw new Error('invalid long capture progress');
   return progress as LongCaptureProgress;
+}
+
+function parseLongCaptureTerminalOutcome(
+  value: unknown,
+  sessionId: number,
+): LongCaptureTerminalOutcome {
+  if (!value || typeof value !== 'object') {
+    throw new Error('invalid long capture terminal response');
+  }
+  const outcome = value as Record<string, unknown>;
+  if (
+    outcome.sessionId !== sessionId
+    || !terminalActions.has(outcome.action as LongCaptureTerminalAction)
+    || !terminalStatuses.has(outcome.status as LongCaptureTerminalOutcome['status'])
+  ) {
+    throw new Error('invalid long capture terminal response');
+  }
+  return outcome as LongCaptureTerminalOutcome;
 }
 
 function parseSettings(value: unknown): AppSettings {
@@ -71,6 +104,8 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     },
     async startLongCapture(region, onProgress) {
       onProgress({
+        sessionId: 0,
+        revision: 0,
         frameCount: 0,
         stitchedHeight: 0,
         state: 'preparing',
@@ -124,6 +159,19 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     async finishLongCapture() { await invoke('finish_long_capture'); },
     async cancelLongCapture() {
       await invoke('cancel_long_capture');
+    },
+    async requestLongCaptureTerminal(sessionId, action) {
+      if (
+        !Number.isSafeInteger(sessionId)
+        || sessionId <= 0
+        || !terminalActions.has(action)
+      ) {
+        throw new Error('invalid long capture terminal request');
+      }
+      return parseLongCaptureTerminalOutcome(
+        await invoke('request_long_capture_terminal', { sessionId, action }),
+        sessionId,
+      );
     },
     async getLongCaptureProgress() {
       return parseLongCaptureProgress(await invoke('long_capture_progress'));

@@ -38,8 +38,13 @@ export function createBrowserDesktopBridge(
     async saveLongCapture() {},
     async finishLongCapture() {},
     async cancelLongCapture() {},
+    async requestLongCaptureTerminal(sessionId, action) {
+      return { sessionId, action, status: 'accepted' };
+    },
     async getLongCaptureProgress() {
       return {
+        sessionId: 0,
+        revision: 0,
         frameCount: 0,
         stitchedHeight: 0,
         state: 'failed',

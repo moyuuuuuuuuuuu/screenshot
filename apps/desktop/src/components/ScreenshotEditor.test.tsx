@@ -37,6 +37,11 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     saveLongCapture: vi.fn().mockResolvedValue(undefined),
     finishLongCapture: vi.fn().mockResolvedValue(undefined),
     cancelLongCapture: vi.fn().mockResolvedValue(undefined),
+    requestLongCaptureTerminal: vi.fn().mockResolvedValue({
+      sessionId: 1,
+      action: 'finish',
+      status: 'accepted',
+    }),
     getLongCaptureProgress: vi.fn(),
     getCloudDeviceId: vi.fn().mockResolvedValue('123e4567-e89b-42d3-a456-426614174000'),
     loadSettings: vi.fn().mockResolvedValue({
@@ -905,6 +910,8 @@ describe('ScreenshotEditor', () => {
     await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
 
     reportProgress?.({
+      sessionId: 1,
+      revision: 2,
       frameCount: 3,
       stitchedHeight: 1240,
       state: 'matching',
