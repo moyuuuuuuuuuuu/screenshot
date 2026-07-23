@@ -4,8 +4,14 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import sharp from 'sharp';
 
 import { recognitionResultSchema } from './domain/result.js';
+import { CozeOcrTranslationProvider } from './providers/coze-provider.js';
 import { MockOcrTranslationProvider } from './providers/mock-provider.js';
-import type { OcrTranslationProvider, RecognitionMode } from './providers/provider.js';
+import {
+  ProviderError,
+  type OcrTranslationProvider,
+  type ProviderErrorCode,
+  type RecognitionMode,
+} from './providers/provider.js';
 import { MemoryQuotaStore } from './quota/memory-quota-store.js';
 import type { QuotaStore } from './quota/quota-store.js';
 import { verifyRequestSignature } from './security/request-signature.js';
@@ -24,6 +30,7 @@ type ErrorCode =
   | 'INVALID_SIGNATURE'
   | 'RATE_LIMITED'
   | 'QUOTA_EXCEEDED'
+  | ProviderErrorCode
   | 'INTERNAL_SERVER_ERROR';
 
 type ErrorEnvelope = Readonly<{
@@ -49,6 +56,8 @@ export interface AuditLogger {
 export type ServerOptions = Readonly<{
   signingSecret: string;
   provider?: OcrTranslationProvider;
+  environment?: CloudProviderEnvironment;
+  providerFetch?: typeof fetch;
   quotaStore?: QuotaStore;
   clock?: () => number;
   auditLogger?: AuditLogger;
@@ -67,6 +76,40 @@ type ServerDependencies = Readonly<{
 
 const noopAuditLogger: AuditLogger = { log: () => undefined };
 
+export type CloudProviderEnvironment = Readonly<{
+  NODE_ENV?: string;
+  CLOUD_PROVIDER?: string;
+  COZE_API_BASE_URL?: string;
+  COZE_API_TOKEN?: string;
+  COZE_WORKFLOW_ID?: string;
+}>;
+
+export function createProviderFromEnvironment(
+  environment: CloudProviderEnvironment = process.env,
+  fetchImpl: typeof fetch = fetch,
+): OcrTranslationProvider {
+  const providerName = environment.CLOUD_PROVIDER;
+  if (environment.NODE_ENV === 'production' && providerName !== 'coze') {
+    throw new Error('Production requires CLOUD_PROVIDER=coze.');
+  }
+  if (providerName === 'mock') {
+    return new MockOcrTranslationProvider();
+  }
+  if (providerName !== 'coze') {
+    throw new Error('Unsupported CLOUD_PROVIDER.');
+  }
+
+  const baseUrl = requiredCozeEnvironment(environment, 'COZE_API_BASE_URL');
+  const token = requiredCozeEnvironment(environment, 'COZE_API_TOKEN');
+  const workflowId = requiredCozeEnvironment(environment, 'COZE_WORKFLOW_ID');
+  return new CozeOcrTranslationProvider({
+    baseUrl,
+    token,
+    workflowId,
+    fetch: fetchImpl,
+  });
+}
+
 export function buildServer(options: ServerOptions): FastifyInstance {
   if (options.signingSecret.trim().length === 0) {
     throw new Error('A non-empty signing secret is required.');
@@ -75,7 +118,12 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   const clock = options.clock ?? Date.now;
   const dependencies: ServerDependencies = {
     signingSecret: options.signingSecret,
-    provider: options.provider ?? new MockOcrTranslationProvider(),
+    provider:
+      options.provider ??
+      createProviderFromEnvironment(
+        options.environment ?? process.env,
+        options.providerFetch ?? fetch,
+      ),
     quotaStore: options.quotaStore ?? new MemoryQuotaStore(),
     clock,
     auditLogger: options.auditLogger ?? noopAuditLogger,
@@ -254,9 +302,27 @@ async function recognize(
     );
   }
 
-  const result = recognitionResultSchema.parse(
-    await dependencies.provider.recognize(mode, request.body, requestId),
-  );
+  let result;
+  try {
+    result = recognitionResultSchema.parse(
+      await dependencies.provider.recognize(mode, request.body, requestId),
+    );
+  } catch (error) {
+    if (error instanceof ProviderError) {
+      const response = providerErrorResponses[error.code];
+      return reject(
+        reply,
+        dependencies,
+        startedAt,
+        requestId,
+        mode,
+        response.statusCode,
+        error.code,
+        error.message,
+      );
+    }
+    throw error;
+  }
   dependencies.auditLogger.log({
     requestId,
     operation: mode,
@@ -521,3 +587,23 @@ function isBodyTooLargeError(error: unknown): boolean {
     error.code === 'FST_ERR_CTP_BODY_TOO_LARGE'
   );
 }
+
+function requiredCozeEnvironment(
+  environment: CloudProviderEnvironment,
+  name: 'COZE_API_BASE_URL' | 'COZE_API_TOKEN' | 'COZE_WORKFLOW_ID',
+): string {
+  const value = environment[name]?.trim() ?? '';
+  if (value.length === 0) {
+    throw new Error(`${name} is required when CLOUD_PROVIDER=coze.`);
+  }
+  return value;
+}
+
+const providerErrorResponses: Readonly<
+  Record<ProviderErrorCode, Readonly<{ statusCode: number }>>
+> = {
+  UNSUPPORTED_LANGUAGE: { statusCode: 422 },
+  PROVIDER_INVALID_RESPONSE: { statusCode: 502 },
+  PROVIDER_TIMEOUT: { statusCode: 504 },
+  PROVIDER_UNAVAILABLE: { statusCode: 503 },
+};

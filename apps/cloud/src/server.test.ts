@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RecognitionResult } from './domain/result.js';
-import type { OcrTranslationProvider, RecognitionMode } from './providers/provider.js';
+import {
+  ProviderError,
+  type OcrTranslationProvider,
+  type RecognitionMode,
+} from './providers/provider.js';
 import type { QuotaStore } from './quota/quota-store.js';
 import { createRequestSignature } from './security/request-signature.js';
 import {
@@ -509,6 +513,58 @@ describe('privacy-safe audit logging', () => {
 
     await app.close();
   });
+
+  it.each([
+    ['UNSUPPORTED_LANGUAGE', 422, 'The detected language is not supported.'],
+    ['PROVIDER_INVALID_RESPONSE', 502, 'The OCR provider returned an invalid response.'],
+    ['PROVIDER_TIMEOUT', 504, 'The OCR provider timed out.'],
+    ['PROVIDER_UNAVAILABLE', 503, 'The OCR provider is unavailable.'],
+  ] as const)(
+    'maps typed provider error %s to a stable privacy-safe envelope',
+    async (code, statusCode, message) => {
+      const provider: OcrTranslationProvider = {
+        recognize: vi.fn(async () => {
+          throw new ProviderError(code);
+        }),
+      };
+      const { app, auditEvents } = createHarness({ provider });
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/ocr',
+        headers: signedHeaders('ocr'),
+        payload: png,
+      });
+
+      expect(response.statusCode).toBe(statusCode);
+      expect(response.json()).toEqual({
+        error: {
+          code,
+          message,
+          requestId: 'server-request-1',
+        },
+      });
+      expect(auditEvents).toEqual([
+        {
+          requestId: 'server-request-1',
+          operation: 'ocr',
+          durationMs: 0,
+          statusCode,
+          errorCode: code,
+        },
+      ]);
+      const serialized = JSON.stringify({ body: response.json(), auditEvents });
+      for (const forbidden of [
+        'server-only-coze-token',
+        'private OCR text',
+        'private translation',
+        'https://debug.example/private',
+      ]) {
+        expect(serialized).not.toContain(forbidden);
+      }
+
+      await app.close();
+    },
+  );
 });
 
 function pngHeader(width: number, height: number): Buffer {
