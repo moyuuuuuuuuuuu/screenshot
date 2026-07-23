@@ -128,18 +128,29 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: |
+          $ErrorActionPreference = "Stop"
           $encodedPath = Join-Path $env:RUNNER_TEMP "windows-certificate.base64"
           $pfxPath = Join-Path $env:RUNNER_TEMP "windows-certificate.pfx"
-          $thumbprintsPath = Join-Path $env:RUNNER_TEMP "imported-certificate-thumbprints.txt"
+          $certificateStoreSnapshotPath = Join-Path $env:RUNNER_TEMP "certificate-store-before-import.txt"
           $configPath = Join-Path $env:RUNNER_TEMP "tauri-signing.conf.json"
           $expectedThumbprint = ($env:WINDOWS_CERTIFICATE_THUMBPRINT -replace "\s", "").ToUpperInvariant()
+
+          $certificateStoreBeforeImport = @(
+            Get-ChildItem Cert:\CurrentUser\My -ErrorAction Stop |
+              ForEach-Object { $_.Thumbprint.ToUpperInvariant() } |
+              Sort-Object -Unique
+          )
+          [IO.File]::WriteAllLines(
+            $certificateStoreSnapshotPath,
+            [string[]]$certificateStoreBeforeImport
+          )
 
           Set-Content -Path $encodedPath -Value $env:WINDOWS_CERTIFICATE -NoNewline
           certutil -decode $encodedPath $pfxPath | Out-Null
           if ($LASTEXITCODE -ne 0) {
             throw "Unable to decode WINDOWS_CERTIFICATE."
           }
-          Remove-Item $encodedPath -Force
+          Remove-Item -LiteralPath $encodedPath -Force -ErrorAction Stop
 
           $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
           $imported = @(
@@ -148,10 +159,6 @@ jobs:
               -CertStoreLocation Cert:\CurrentUser\My `
               -Password $password
           )
-          $imported |
-            ForEach-Object { $_.Thumbprint } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Set-Content -Path $thumbprintsPath
 
           $signingCertificate = $imported |
             Where-Object {
@@ -220,21 +227,55 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $thumbprintsPath = Join-Path $env:RUNNER_TEMP "imported-certificate-thumbprints.txt"
-          if (Test-Path $thumbprintsPath) {
-            Get-Content $thumbprintsPath |
-              ForEach-Object {
-                $certificatePath = "Cert:\CurrentUser\My\$($_)"
-                if (Test-Path $certificatePath) {
-                  Remove-Item $certificatePath -Force
-                }
-              }
+          $ErrorActionPreference = "Stop"
+          $certificateStoreSnapshotPath = Join-Path $env:RUNNER_TEMP "certificate-store-before-import.txt"
+          $cleanupFailures = @()
+          $certificatesToRemove = @()
+
+          if (Test-Path -LiteralPath $certificateStoreSnapshotPath) {
+            try {
+              $certificateStoreBeforeImport = @(
+                Get-Content -LiteralPath $certificateStoreSnapshotPath -ErrorAction Stop |
+                  Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+              )
+              $certificatesToRemove = @(
+                Get-ChildItem Cert:\CurrentUser\My -ErrorAction Stop |
+                  Where-Object {
+                    $certificateStoreBeforeImport -notcontains $_.Thumbprint.ToUpperInvariant()
+                  }
+              )
+            } catch {
+              $cleanupFailures += "certificate-store-snapshot"
+              Write-Host "::error::Unable to compare the certificate store with its pre-import snapshot."
+            }
           }
+
+          foreach ($certificate in $certificatesToRemove) {
+            try {
+              $certificatePath = "Cert:\CurrentUser\My\$($certificate.Thumbprint)"
+              Remove-Item -LiteralPath $certificatePath -Force -ErrorAction Stop
+            } catch {
+              $cleanupFailures += "certificate-store-entry"
+              Write-Host "::error::Unable to remove a certificate imported by this workflow."
+            }
+          }
+
           @(
             (Join-Path $env:RUNNER_TEMP "windows-certificate.base64"),
             (Join-Path $env:RUNNER_TEMP "windows-certificate.pfx"),
-            $thumbprintsPath,
+            $certificateStoreSnapshotPath,
             (Join-Path $env:RUNNER_TEMP "tauri-signing.conf.json")
-          ) |
-            Where-Object { Test-Path $_ } |
-            Remove-Item -Force
+          ) | ForEach-Object {
+            try {
+              if (Test-Path -LiteralPath $_ -ErrorAction Stop) {
+                Remove-Item -LiteralPath $_ -Force -ErrorAction Stop
+              }
+            } catch {
+              $cleanupFailures += "temporary-file"
+              Write-Host "::error::Unable to remove temporary signing material."
+            }
+          }
+
+          if ($cleanupFailures.Count -gt 0) {
+            throw "Failed to remove signing material."
+          }
