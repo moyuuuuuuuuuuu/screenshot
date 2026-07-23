@@ -584,6 +584,6 @@ Use this prompt on the next device:
 
 - Branch: `main`
 - HEAD: `fb84759 fix: harden Windows signing cleanup`
-- Verified: cloud tests 105/105, desktop tests 164/164, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, workflow YAML/PowerShell validation, unsigned NSIS generation, Authenticode `NotSigned`, and two E1 review passes.
-- Blockers: the local MSI build stops at WiX `light.exe` until the Windows VBSCRIPT optional feature is enabled; signed builds require the three repository secrets; clean-account installation and the E2 matrix remain unexecuted. Long-capture defects remain intentionally deferred.
-- Next action: enable VBSCRIPT and rebuild MSI/NSIS, then run the GitHub workflow and execute Task E2 from `docs/release-checklist.md`.
+- Verified: cloud tests 105/105, desktop tests 164/164, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, workflow YAML/PowerShell validation, unsigned zh-CN MSI and NSIS generation, Authenticode `NotSigned`, MSI metadata inspection, and E1 review passes.
+- Blockers: signed builds require the three repository secrets; a clean Windows test account or sandbox is not available on this device, so installation and the E2 matrix remain unexecuted. Long-capture defects remain intentionally deferred.
+- Next action: run the GitHub workflow, then execute clean-account MSI/NSIS installation and Task E2 from `docs/release-checklist.md`.

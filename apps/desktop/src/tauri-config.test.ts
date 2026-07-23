@@ -59,6 +59,9 @@ describe('Tauri overlay configuration', () => {
             type: string;
             silent: boolean;
           };
+          wix: {
+            language: string;
+          };
         };
       };
     };
@@ -77,6 +80,9 @@ describe('Tauri overlay configuration', () => {
       webviewInstallMode: {
         type: 'downloadBootstrapper',
         silent: true,
+      },
+      wix: {
+        language: 'zh-CN',
       },
     });
 

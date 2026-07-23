@@ -136,39 +136,49 @@ Get-AuthenticodeSignature .\path\to\installer-setup.exe |
 
 ## 6. 本次自动验证记录（2026-07-23）
 
-本机执行组合命令：
+本机最初执行组合命令：
 
 ```powershell
 pnpm --filter @screenshot/desktop tauri:build --debug --bundles msi,nsis --no-sign
 ```
 
 编译和前端构建成功，但 WiX 在生成 MSI 时退出，因此组合命令没有继续
-生成 NSIS。完整的非敏感阻塞信息是：
+生成 NSIS。默认日志只显示：
 
 ```text
 failed to bundle project: failed to run
 C:\Users\Administrator\AppData\Local\tauri\WixTools314\light.exe
 ```
 
-本机没有生成 MSI。继续验证前，应在“设置 > 应用 > 可选功能 >
-更多 Windows 功能”中启用 VBSCRIPT，重启后重新运行组合命令；若仍
-失败，再检查 WiX `light.exe` 的系统依赖和 Windows 事件日志。
+使用 `tauri build -vv` 复现后，确认 `light.exe` 本身可以运行，真正
+错误为 `LGHT0311`：默认 `en-US` MSI 使用 code page 1252，无法编码
+中文产品名“截图工具”。因此在 Tauri Windows WiX 配置中固定：
 
-为隔离 MSI 工具问题，随后执行：
-
-```powershell
-pnpm --filter @screenshot/desktop tauri:build --debug --bundles nsis --no-sign
+```json
+{
+  "wix": {
+    "language": "zh-CN"
+  }
+}
 ```
 
-NSIS 构建成功，精确产物为：
+配置回归测试先失败，再因上述最小修改通过。重新运行原组合命令后，
+MSI 和 NSIS 均成功生成：
 
 ```text
+apps/desktop/src-tauri/target/debug/bundle/msi/截图工具_0.1.0_x64_zh-CN.msi
 apps/desktop/src-tauri/target/debug/bundle/nsis/截图工具_0.1.0_x64-setup.exe
 ```
 
-该文件为预期的未签名内部测试包，大小 2,865,994 bytes，
-`Get-AuthenticodeSignature` 返回 `NotSigned`。这只证明本机可以生成
-NSIS 文件，不代表已经完成安装、升级、卸载或干净账户验收。
+| 产物 | 大小 | Authenticode | SHA-256 |
+| --- | ---: | --- | --- |
+| `截图工具_0.1.0_x64_zh-CN.msi` | 4,808,704 bytes | `NotSigned` | `42CABF4959CA0EB4753F95DBBC47E2868F2C6480CC4B92216EB188CDDE827151` |
+| `截图工具_0.1.0_x64-setup.exe` | 2,881,985 bytes | `NotSigned` | `FCED7D7434C68EFAB1300A5909A6889890CA10B76F9AA9489470677B28098182` |
+
+通过 Windows Installer 只读接口确认 MSI 元数据为
+`ProductLanguage=2052`、`ProductName=截图工具`、
+`ProductVersion=0.1.0`。这些结果只证明两个未签名内部测试包可以生成
+且 MSI 元数据可读，不代表已经完成安装、升级、卸载或干净账户验收。
 
 ## 7. 干净账户安装验收
 
