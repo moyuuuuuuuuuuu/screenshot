@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicBool, AtomicU8, Ordering},
-    Mutex,
+    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+    Condvar, Mutex,
 };
 use std::time::{Duration, Instant};
 
@@ -84,6 +84,22 @@ impl LongCaptureAction {
             _ => Self::None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalRequestStatus {
+    Accepted,
+    AlreadyTerminating,
+    Stale,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalRequestOutcome {
+    session_id: u64,
+    action: LongCaptureAction,
+    status: TerminalRequestStatus,
 }
 
 #[derive(Serialize)]
@@ -261,39 +277,65 @@ where
 
 pub struct LongCaptureRuntime {
     active: AtomicBool,
+    next_session_id: AtomicU64,
+    active_session_id: AtomicU64,
     stop_requested: AtomicBool,
     cancel_requested: AtomicBool,
     progress: Mutex<LongCaptureProgress>,
     action: AtomicU8,
+    session_transition: Mutex<()>,
+    terminal_epoch: Mutex<u64>,
+    terminal_changed: Condvar,
 }
 
 impl Default for LongCaptureRuntime {
     fn default() -> Self {
         Self {
             active: AtomicBool::new(false),
+            next_session_id: AtomicU64::new(0),
+            active_session_id: AtomicU64::new(0),
             stop_requested: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
             progress: Mutex::new(LongCaptureProgress::default()),
             action: AtomicU8::new(LongCaptureAction::None.code()),
+            session_transition: Mutex::new(()),
+            terminal_epoch: Mutex::new(0),
+            terminal_changed: Condvar::new(),
         }
     }
 }
 
 impl LongCaptureRuntime {
-    fn begin(&self) -> Result<(), String> {
+    fn begin(&self) -> Result<u64, String> {
+        let _transition = self
+            .session_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "a long capture is already running".to_string())?;
+        let session_id = self.next_session_id.fetch_add(1, Ordering::AcqRel) + 1;
+        self.active_session_id.store(session_id, Ordering::Release);
         self.stop_requested.store(false, Ordering::Release);
         self.cancel_requested.store(false, Ordering::Release);
         self.action
             .store(LongCaptureAction::None.code(), Ordering::Release);
         self.update(0, 0, "preparing", Vec::new(), false, 0);
-        Ok(())
+        Ok(session_id)
     }
 
-    fn finish(&self) {
-        self.active.store(false, Ordering::Release);
+    fn finish(&self, session_id: u64) {
+        let _transition = self
+            .session_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.active_session_id.load(Ordering::Acquire) == session_id {
+            self.active.store(false, Ordering::Release);
+        }
+    }
+
+    fn active_session_id(&self) -> u64 {
+        self.active_session_id.load(Ordering::Acquire)
     }
 
     fn update(
@@ -324,29 +366,83 @@ impl LongCaptureRuntime {
         }
     }
 
-    fn request_terminal_action(&self, action: LongCaptureAction) -> bool {
-        if self
+    pub fn request_terminal(
+        &self,
+        session_id: u64,
+        requested: LongCaptureAction,
+    ) -> TerminalRequestOutcome {
+        let _transition = self
+            .session_transition
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.is_active() || self.active_session_id() != session_id {
+            return TerminalRequestOutcome {
+                session_id,
+                action: requested,
+                status: TerminalRequestStatus::Stale,
+            };
+        }
+        let accepted = self
             .action
             .compare_exchange(
                 LongCaptureAction::None.code(),
-                action.code(),
+                requested.code(),
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
-            .is_err()
-        {
-            return false;
-        }
-        if action == LongCaptureAction::Cancel {
-            self.cancel_requested.store(true, Ordering::Release);
+            .is_ok();
+        let action = if accepted {
+            requested
         } else {
-            self.stop_requested.store(true, Ordering::Release);
+            self.requested_action()
+        };
+        if accepted {
+            if action == LongCaptureAction::Cancel {
+                self.cancel_requested.store(true, Ordering::Release);
+            } else {
+                self.stop_requested.store(true, Ordering::Release);
+            }
+            if let Ok(mut epoch) = self.terminal_epoch.lock() {
+                *epoch = epoch.saturating_add(1);
+            }
+            self.terminal_changed.notify_all();
         }
-        true
+        TerminalRequestOutcome {
+            session_id,
+            action,
+            status: if accepted {
+                TerminalRequestStatus::Accepted
+            } else {
+                TerminalRequestStatus::AlreadyTerminating
+            },
+        }
+    }
+
+    pub fn request_current(&self, action: LongCaptureAction) -> TerminalRequestOutcome {
+        self.request_terminal(self.active_session_id(), action)
+    }
+
+    fn wait_for_sample_or_terminal(&self, duration: Duration) -> bool {
+        if self.requested_action() != LongCaptureAction::None {
+            return true;
+        }
+        let Ok(epoch) = self.terminal_epoch.lock() else {
+            return false;
+        };
+        let initial = *epoch;
+        let Ok((epoch, _)) = self
+            .terminal_changed
+            .wait_timeout_while(epoch, duration, |current| {
+                *current == initial && self.requested_action() == LongCaptureAction::None
+            })
+        else {
+            return false;
+        };
+        *epoch != initial || self.requested_action() != LongCaptureAction::None
     }
 
     pub fn request_cancel(&self) {
-        self.request_terminal_action(LongCaptureAction::Cancel);
+        self.request_current(LongCaptureAction::Cancel);
     }
 
     pub fn is_cancel_requested(&self) -> bool {
@@ -358,13 +454,13 @@ impl LongCaptureRuntime {
     }
 
     pub fn request_edit(&self) {
-        self.request_terminal_action(LongCaptureAction::Edit);
+        self.request_current(LongCaptureAction::Edit);
     }
     pub fn request_save(&self) {
-        self.request_terminal_action(LongCaptureAction::Save);
+        self.request_current(LongCaptureAction::Save);
     }
     pub fn request_finish(&self) {
-        self.request_terminal_action(LongCaptureAction::Finish);
+        self.request_current(LongCaptureAction::Finish);
     }
     fn requested_action(&self) -> LongCaptureAction {
         LongCaptureAction::from_code(self.action.load(Ordering::Acquire))
@@ -751,7 +847,7 @@ fn run_capture(
             latest_motion_frame_was_appended = false;
         }
         publish_progress(runtime, &session, &preview_png, accepted_tail.width);
-        std::thread::sleep(SAMPLE_INTERVAL);
+        let _ = runtime.wait_for_sample_or_terminal(SAMPLE_INTERVAL);
     }
 
     let outcome = termination(
@@ -785,7 +881,7 @@ pub async fn start_long_capture(
     runtime: tauri::State<'_, LongCaptureRuntime>,
     region: CaptureRegion,
 ) -> Result<LongCaptureResult, String> {
-    runtime.begin()?;
+    let session_id = runtime.begin()?;
     let result = (|| {
         let window = app
             .get_webview_window("overlay")
@@ -950,7 +1046,7 @@ pub async fn start_long_capture(
         }
         resolve_capture_cleanup(capture_result, cleanup_result)
     })();
-    runtime.finish();
+    runtime.finish(session_id);
     result
 }
 
@@ -1139,6 +1235,7 @@ mod tests {
             ),
         ] {
             let runtime = super::LongCaptureRuntime::default();
+            runtime.begin().unwrap();
             request(&runtime);
             assert_eq!(runtime.requested_action(), expected);
         }
@@ -1147,6 +1244,7 @@ mod tests {
     #[test]
     fn first_terminal_action_wins_when_finish_precedes_cancel() {
         let runtime = super::LongCaptureRuntime::default();
+        runtime.begin().unwrap();
 
         runtime.request_finish();
         runtime.request_cancel();
@@ -1161,12 +1259,89 @@ mod tests {
     #[test]
     fn first_terminal_action_wins_when_cancel_precedes_finish() {
         let runtime = super::LongCaptureRuntime::default();
+        runtime.begin().unwrap();
 
         runtime.request_cancel();
         runtime.request_finish();
 
         assert_eq!(runtime.requested_action(), LongCaptureAction::Cancel);
         assert!(runtime.is_cancel_requested());
+    }
+
+    #[test]
+    fn terminal_request_accepts_only_the_active_session_and_first_action() {
+        let runtime = super::LongCaptureRuntime::default();
+        let session_id = runtime.begin().unwrap();
+
+        let stale = runtime.request_terminal(session_id + 1, LongCaptureAction::Cancel);
+        assert_eq!(stale.status, super::TerminalRequestStatus::Stale);
+
+        let accepted = runtime.request_terminal(session_id, LongCaptureAction::Finish);
+        assert_eq!(accepted.status, super::TerminalRequestStatus::Accepted);
+        assert_eq!(accepted.action, LongCaptureAction::Finish);
+
+        let duplicate = runtime.request_terminal(session_id, LongCaptureAction::Cancel);
+        assert_eq!(
+            duplicate.status,
+            super::TerminalRequestStatus::AlreadyTerminating
+        );
+        assert_eq!(duplicate.action, LongCaptureAction::Finish);
+    }
+
+    #[test]
+    fn terminal_request_wakes_the_sampling_wait() {
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let runtime = Arc::new(super::LongCaptureRuntime::default());
+        let session_id = runtime.begin().unwrap();
+        let waiter = Arc::clone(&runtime);
+        let started = Instant::now();
+        let thread =
+            std::thread::spawn(move || waiter.wait_for_sample_or_terminal(Duration::from_secs(2)));
+
+        std::thread::sleep(Duration::from_millis(20));
+        runtime.request_terminal(session_id, LongCaptureAction::Cancel);
+
+        assert!(thread.join().unwrap());
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn finishing_an_old_session_does_not_clear_a_new_session() {
+        let runtime = super::LongCaptureRuntime::default();
+        let first = runtime.begin().unwrap();
+        runtime.finish(first);
+        let second = runtime.begin().unwrap();
+        runtime.finish(first);
+        assert!(runtime.is_active());
+        assert_eq!(runtime.active_session_id(), second);
+    }
+
+    #[test]
+    fn old_session_terminal_request_cannot_mutate_a_new_session() {
+        use std::sync::{mpsc, Arc};
+
+        let runtime = Arc::new(super::LongCaptureRuntime::default());
+        let first = runtime.begin().unwrap();
+        let requester = Arc::clone(&runtime);
+        let (release, wait) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            wait.recv().unwrap();
+            requester.request_terminal(first, LongCaptureAction::Cancel)
+        });
+
+        runtime.finish(first);
+        let second = runtime.begin().unwrap();
+        release.send(()).unwrap();
+
+        let stale = thread.join().unwrap();
+        assert_eq!(stale.status, super::TerminalRequestStatus::Stale);
+        assert_eq!(runtime.requested_action(), LongCaptureAction::None);
+
+        let accepted = runtime.request_terminal(second, LongCaptureAction::Finish);
+        assert_eq!(accepted.status, super::TerminalRequestStatus::Accepted);
+        assert_eq!(runtime.requested_action(), LongCaptureAction::Finish);
     }
 
     #[test]
@@ -1429,6 +1604,7 @@ mod tests {
     #[test]
     fn runtime_exposes_cancel_request_for_cleanup() {
         let runtime = super::LongCaptureRuntime::default();
+        runtime.begin().unwrap();
 
         assert!(!runtime.is_cancel_requested());
         runtime.request_cancel();
