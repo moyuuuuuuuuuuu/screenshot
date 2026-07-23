@@ -30,6 +30,27 @@ describe('request signature helpers', () => {
     );
   });
 
+  it('signs quota with the quota operation and an empty byte array', () => {
+    const quotaInput = {
+      deviceId: input.deviceId,
+      timestamp: input.timestamp,
+      mode: 'quota' as const,
+      image: new Uint8Array(),
+    };
+
+    expect(createCanonicalRequestPayload(quotaInput)).toBe(
+      [
+        input.deviceId,
+        input.timestamp,
+        'quota',
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      ].join('\n'),
+    );
+    expect(createRequestSignature(quotaInput, 'test-secret')).toBe(
+      'a68ed41fd3f57c6fdbdbd2da66fd65795b6fabfb7293f61f936e9c888620c87e',
+    );
+  });
+
   it('verifies the expected signature and rejects invalid values', () => {
     const signature = createRequestSignature(input, 'test-secret');
 

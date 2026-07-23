@@ -14,7 +14,10 @@ import {
 } from './providers/provider.js';
 import { MemoryQuotaStore } from './quota/memory-quota-store.js';
 import type { QuotaStore } from './quota/quota-store.js';
-import { verifyRequestSignature } from './security/request-signature.js';
+import {
+  verifyRequestSignature,
+  type RequestOperation,
+} from './security/request-signature.js';
 
 const maximumImageBytes = 8 * 1024 * 1024;
 const maximumImageEdge = 4096;
@@ -43,7 +46,7 @@ type ErrorEnvelope = Readonly<{
 
 export type AuditEvent = Readonly<{
   requestId: string;
-  operation: RecognitionMode;
+  operation: RequestOperation;
   durationMs: number;
   statusCode: number;
   errorCode?: ErrorCode;
@@ -186,8 +189,87 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   app.post('/v1/translate', async (request, reply) =>
     recognize('translate', request, reply, dependencies),
   );
+  app.get('/v1/quota', async (request, reply) =>
+    readQuota(request, reply, dependencies),
+  );
 
   return app;
+}
+
+async function readQuota(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  dependencies: ServerDependencies,
+): Promise<FastifyReply> {
+  const startedAt = dependencies.clock();
+  const requestId = getRequestId(request);
+  const now = dependencies.clock();
+  if (!dependencies.rateLimiter.accept(request.ip, now)) {
+    return reject(
+      reply,
+      dependencies,
+      startedAt,
+      requestId,
+      'quota',
+      429,
+      'RATE_LIMITED',
+      'Too many requests. Try again later.',
+    );
+  }
+
+  const authentication = verifyAuthentication(
+    'quota',
+    request,
+    dependencies,
+    now,
+    new Uint8Array(),
+  );
+  if (authentication === null) {
+    return reject(
+      reply,
+      dependencies,
+      startedAt,
+      requestId,
+      'quota',
+      401,
+      'INVALID_SIGNATURE',
+      'The request signature is invalid.',
+    );
+  }
+
+  if (
+    !dependencies.replayGuard.accept(
+      authentication.deviceId,
+      authentication.timestamp,
+      authentication.signature,
+      authentication.timestampMilliseconds,
+      now,
+    )
+  ) {
+    return reject(
+      reply,
+      dependencies,
+      startedAt,
+      requestId,
+      'quota',
+      401,
+      'INVALID_SIGNATURE',
+      'The request signature is invalid.',
+    );
+  }
+
+  const status = await dependencies.quotaStore.status(authentication.deviceId, now);
+  dependencies.auditLogger.log({
+    requestId,
+    operation: 'quota',
+    durationMs: elapsed(dependencies.clock(), startedAt),
+    statusCode: 200,
+  });
+  return reply.send({
+    ocr: { limit: 20, remaining: status.ocr.remaining },
+    translate: { limit: 10, remaining: status.translate.remaining },
+    resetsAt: status.resetsAt,
+  });
 }
 
 async function recognize(
@@ -340,10 +422,11 @@ type VerifiedAuthentication = Readonly<{
 }>;
 
 function verifyAuthentication(
-  mode: RecognitionMode,
+  mode: RequestOperation,
   request: FastifyRequest,
   dependencies: ServerDependencies,
   now: number,
+  body: Uint8Array = request.body as Buffer,
 ): VerifiedAuthentication | null {
   const deviceId = singleHeader(request.headers['x-device-id']);
   const timestamp = singleHeader(request.headers['x-request-timestamp']);
@@ -363,7 +446,7 @@ function verifyAuthentication(
     !Number.isSafeInteger(timestampMilliseconds) ||
     Math.abs(now - timestampMilliseconds) > freshnessWindowMilliseconds ||
     !verifyRequestSignature(
-      { deviceId, timestamp, mode, image: request.body as Buffer },
+      { deviceId, timestamp, mode, image: body },
       dependencies.signingSecret,
       signature,
     )
@@ -540,7 +623,7 @@ function reject(
   dependencies: ServerDependencies,
   startedAt: number,
   requestId: string,
-  operation: RecognitionMode,
+  operation: RequestOperation,
   statusCode: number,
   errorCode: ErrorCode,
   message: string,
@@ -563,7 +646,10 @@ function getRequestId(request: FastifyRequest): string {
   return request.id;
 }
 
-function getOperation(request: FastifyRequest): RecognitionMode {
+function getOperation(request: FastifyRequest): RequestOperation {
+  if (request.url.startsWith('/v1/quota')) {
+    return 'quota';
+  }
   return request.url.startsWith('/v1/translate') ? 'translate' : 'ocr';
 }
 

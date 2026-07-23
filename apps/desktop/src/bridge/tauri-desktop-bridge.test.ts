@@ -2,6 +2,28 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTauriDesktopBridge } from './tauri-desktop-bridge';
 
 describe('createTauriDesktopBridge', () => {
+  it('gets the anonymous cloud device ID through the exact Tauri command', async () => {
+    const invoke = vi.fn().mockResolvedValue(
+      '123e4567-e89b-42d3-a456-426614174000',
+    );
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.getCloudDeviceId()).resolves.toBe(
+      '123e4567-e89b-42d3-a456-426614174000',
+    );
+    expect(invoke).toHaveBeenCalledWith('get_cloud_device_id');
+  });
+
+  it('rejects an invalid cloud device ID returned by Tauri', async () => {
+    const bridge = createTauriDesktopBridge(
+      vi.fn().mockResolvedValue('not-a-device-id'),
+    );
+
+    await expect(bridge.getCloudDeviceId()).rejects.toThrow(
+      'get_cloud_device_id returned an invalid ID',
+    );
+  });
+
   it('uses the copy_png command and pngBytes payload', async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
     const bridge = createTauriDesktopBridge(invoke);
@@ -95,10 +117,10 @@ describe('createTauriDesktopBridge', () => {
     expect(invoke).toHaveBeenCalledWith('long_capture_progress');
   });
 
-  it('loads and updates shortcut and Coze settings through native commands', async () => {
+  it('loads and updates shortcut and privacy acknowledgement through native commands', async () => {
     const settings = {
       shortcut: 'Ctrl+Alt+X',
-      coze: { token: 'secret', workflowId: 'workflow-1' },
+      cloudPrivacyAcknowledged: true,
     };
     const invoke = vi.fn()
       .mockResolvedValueOnce(settings)
@@ -110,7 +132,11 @@ describe('createTauriDesktopBridge', () => {
     await expect(bridge.updateSettings(settings)).resolves.toEqual(settings);
     expect(invoke).toHaveBeenNthCalledWith(1, 'load_settings');
     expect(invoke).toHaveBeenNthCalledWith(2, 'update_shortcut', { shortcut: 'Ctrl+Alt+X' });
-    expect(invoke).toHaveBeenNthCalledWith(3, 'update_coze_config', { config: settings.coze });
+    expect(invoke).toHaveBeenNthCalledWith(
+      3,
+      'update_cloud_privacy_acknowledgement',
+      { acknowledged: true },
+    );
   });
 
   it('pins PNG bytes and reports copied share fallback', async () => {

@@ -1,5 +1,6 @@
 pub mod app_state;
 pub mod capture;
+pub mod cloud_identity;
 pub mod frame_stability;
 pub mod hotkey;
 pub mod long_capture;
@@ -17,5 +18,7 @@ pub mod tray;
 
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod cloud_identity_tests;
 #[cfg(test)]
 mod scroll_motion_tracker_tests;

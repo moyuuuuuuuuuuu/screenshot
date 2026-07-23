@@ -16,6 +16,9 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .long-capture-presentation .editor-alert,
 .long-capture-presentation .service-busy,
 .long-capture-presentation .service-result,
+.long-capture-presentation .recognition-panel,
+.long-capture-presentation .recognition-highlight,
+.long-capture-presentation .privacy-dialog-backdrop,
 .long-capture-presentation .editor-toast,
 .long-capture-presentation .capture-error { visibility: hidden; }
 .long-capture-presentation .selection-surface { pointer-events: none; }
@@ -82,6 +85,7 @@ button { font: inherit; }
 .selection-handle--nw { left: 0; top: 0; }.selection-handle--n { left: 50%; top: 0; }.selection-handle--ne { left: 100%; top: 0; }
 .selection-handle--e { left: 100%; top: 50%; }.selection-handle--se { left: 100%; top: 100%; }.selection-handle--s { left: 50%; top: 100%; }
 .selection-handle--sw { left: 0; top: 100%; }.selection-handle--w { left: 0; top: 50%; }
+.recognition-highlight { position: absolute; z-index: 4; border: 1px solid rgba(7, 193, 96, 0.8); background: rgba(7, 193, 96, 0.24); pointer-events: none; }
 
 .toolbar-positioner { position: absolute; z-index: 5; }
 .wechat-toolbar-wrap { position: relative; }
@@ -117,6 +121,30 @@ button { font: inherit; }
 .service-result header button { border: 0; background: transparent; font-size: 20px; cursor: pointer; }
 .service-result textarea { min-height: 150px; padding: 8px; resize: vertical; border: 1px solid #d8dbde; border-radius: 5px; }
 .service-result > button { display: inline-flex; align-items: center; justify-self: end; gap: 6px; padding: 7px 12px; border: 0; border-radius: 5px; background: #07c160; color: #fff; cursor: pointer; }
+.recognition-panel { position: absolute; right: 20px; top: 20px; z-index: 14; display: grid; width: min(380px, calc(100vw - 40px)); max-height: calc(100vh - 40px); gap: 12px; padding: 14px; overflow: auto; border: 1px solid #e3e5e7; border-radius: 8px; background: #fff; color: #242629; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28); }
+.recognition-panel__header, .recognition-panel__actions, .recognition-panel__quota { display: flex; align-items: center; }
+.recognition-panel__header { justify-content: space-between; gap: 12px; }
+.recognition-panel__actions { gap: 2px; }
+.recognition-panel__action { display: grid; width: 32px; height: 32px; padding: 6px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #3e4449; cursor: pointer; }
+.recognition-panel__action:hover, .recognition-panel__action:focus-visible { background: #eef0f1; }
+.recognition-panel__action svg { width: 20px; height: 20px; }
+.recognition-panel pre { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font: inherit; }
+.recognition-panel__content, .recognition-panel__translation { display: grid; gap: 10px; }
+.recognition-panel__translation section { display: grid; gap: 5px; padding: 9px; border-radius: 6px; background: #f5f7f8; }
+.recognition-panel__translation section > span { color: #73787c; font-size: 12px; }
+.recognition-panel__blocks { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.recognition-panel__block { padding: 7px 8px; border-radius: 5px; background: #f5f7f8; outline: none; }
+.recognition-panel__block:hover, .recognition-panel__block:focus-visible { background: rgba(7, 193, 96, 0.12); box-shadow: inset 0 0 0 1px rgba(7, 193, 96, 0.45); }
+.recognition-panel__loading, .recognition-panel__error { padding: 18px 8px; }
+.recognition-panel__error { color: #a32d3a; }
+.recognition-panel__quota { flex-wrap: wrap; gap: 5px 12px; padding-top: 10px; border-top: 1px solid #eceeef; color: #73787c; font-size: 11px; }
+.privacy-dialog-backdrop { position: absolute; inset: 0; z-index: 21; display: grid; place-items: center; background: rgba(0, 0, 0, 0.36); }
+.privacy-dialog { display: grid; width: min(440px, calc(100vw - 32px)); gap: 14px; padding: 20px; border: 1px solid #e3e5e7; border-radius: 10px; background: #fff; color: #242629; box-shadow: 0 16px 50px rgba(0, 0, 0, 0.32); }
+.privacy-dialog h2, .privacy-dialog p { margin: 0; }
+.privacy-dialog p { color: #5f656a; font-size: 14px; line-height: 1.6; }
+.privacy-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.privacy-dialog__actions button { padding: 7px 16px; border: 0; border-radius: 5px; cursor: pointer; }
+.privacy-dialog__actions button:last-child { background: #07c160; color: #fff; }
 .editor-toast { position: absolute; left: 50%; bottom: 28px; z-index: 12; transform: translateX(-50%); padding: 9px 14px; border-radius: 6px; background: rgba(32, 32, 32, 0.92); color: #fff; font-size: 13px; }
 .pin-window { position: relative; width: 100vw; height: 100vh; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.18); background: transparent; }
 .pin-window img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; cursor: move; }

@@ -2,8 +2,20 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
+import {
+  CloudClientError,
+  type CloudClient,
+  type CloudClientErrorCode,
+  type RecognitionResult,
+} from '../cloud/cloud-client';
 import { ScreenshotEditor } from './ScreenshotEditor';
-import type { CozeService } from '../services/coze-service';
+
+const ocrResult: RecognitionResult = {
+  sourceLanguage: 'zh',
+  originalText: '识别结果',
+  translatedText: null,
+  blocks: [{ text: '识别结果', x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
+};
 
 function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   return {
@@ -21,8 +33,12 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     finishLongCapture: vi.fn().mockResolvedValue(undefined),
     cancelLongCapture: vi.fn().mockResolvedValue(undefined),
     getLongCaptureProgress: vi.fn(),
-    loadSettings: vi.fn().mockResolvedValue({ shortcut: 'Alt+Shift+A', coze: { token: '', workflowId: '' } }),
-    updateSettings: vi.fn(),
+    getCloudDeviceId: vi.fn().mockResolvedValue('123e4567-e89b-42d3-a456-426614174000'),
+    loadSettings: vi.fn().mockResolvedValue({
+      shortcut: 'Alt+Shift+A',
+      cloudPrivacyAcknowledged: true,
+    }),
+    updateSettings: vi.fn(async (settings) => settings),
     pinPng: vi.fn().mockResolvedValue('pin-1'),
     sharePng: vi.fn().mockResolvedValue('copiedFallback'),
     getPinnedPng: vi.fn(),
@@ -32,8 +48,31 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   };
 }
 
+function createFakeCloudClient(overrides: Partial<CloudClient> = {}): CloudClient {
+  return {
+    recognize: vi.fn().mockResolvedValue(ocrResult),
+    quota: vi.fn().mockResolvedValue({
+      ocr: { limit: 20, remaining: 19 },
+      translate: { limit: 10, remaining: 10 },
+      resetsAt: '2026-07-23T16:00:00.000Z',
+    }),
+    ...overrides,
+  };
+}
+
+function selectRegion(
+  start = { x: 20, y: 20 },
+  end = { x: 220, y: 160 },
+): void {
+  const surface = screen.getByTestId('selection-surface');
+  fireEvent.pointerDown(surface, { clientX: start.x, clientY: start.y, pointerId: 1 });
+  fireEvent.pointerMove(surface, { clientX: end.x, clientY: end.y, pointerId: 1 });
+  fireEvent.pointerUp(surface, { clientX: end.x, clientY: end.y, pointerId: 1 });
+}
+
 describe('ScreenshotEditor', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
       (callback) => callback(new Blob(['png'], { type: 'image/png' })),
@@ -174,23 +213,258 @@ describe('ScreenshotEditor', () => {
     expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
   });
 
-  it('preserves selection and annotations when OCR fails', async () => {
-    const cozeService: CozeService = {
-      ocr: vi.fn().mockRejectedValue(new Error('服务不可用')),
-      translate: vi.fn(),
-      redact: vi.fn(),
+  it.each([
+    ['QUOTA_EXCEEDED', 'The anonymous daily quota has been exceeded.'],
+    ['PROVIDER_TIMEOUT', 'The recognition service timed out.'],
+    ['NETWORK_UNAVAILABLE', 'The cloud service is unavailable.'],
+    ['INVALID_RESPONSE', 'The cloud service returned an invalid response.'],
+  ] satisfies ReadonlyArray<readonly [CloudClientErrorCode, string]>)(
+    'preserves selection, annotations and undo history on %s',
+    async (code, message) => {
+      const client = createFakeCloudClient({
+        recognize: vi.fn().mockRejectedValue(new CloudClientError(code, message)),
+      });
+      const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      render(
+        <ScreenshotEditor
+          sourceUrl="desktop.png"
+          bridge={createBridge()}
+          cloudClient={client}
+        />,
+      );
+      selectRegion();
+      const annotationSurface = screen.getByTestId('annotation-surface');
+      fireEvent.pointerDown(annotationSurface, {
+        clientX: 50,
+        clientY: 50,
+        pointerId: 2,
+      });
+      fireEvent.pointerMove(annotationSurface, {
+        clientX: 150,
+        clientY: 110,
+        pointerId: 2,
+      });
+      fireEvent.pointerUp(annotationSurface, {
+        clientX: 150,
+        clientY: 110,
+        pointerId: 2,
+      });
+
+      await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(message);
+      expect(screen.getByText('200 × 140')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
+      expect(screen.getByLabelText('截图编辑器')).toHaveAttribute(
+        'data-capture-mode',
+        'annotating',
+      );
+      expect(screen.getByAltText('')).toHaveAttribute('src', 'desktop.png');
+      expect(consoleLog).not.toHaveBeenCalled();
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
+    },
+  );
+
+  it('cancels with zero uploads, then accepts and remembers the privacy acknowledgement', async () => {
+    const bridge = createBridge({
+      loadSettings: vi.fn().mockResolvedValue({
+        shortcut: 'Ctrl+Alt+X',
+        cloudPrivacyAcknowledged: false,
+      }),
+      updateSettings: vi.fn(async (settings) => settings),
+    });
+    const client = createFakeCloudClient();
+    render(
+      <ScreenshotEditor sourceUrl="" bridge={bridge} cloudClient={client} />,
+    );
+    selectRegion();
+
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    expect(await screen.findByRole('dialog', { name: '云服务隐私提示' }))
+      .toBeInTheDocument();
+    expect(client.recognize).not.toHaveBeenCalled();
+    expect(client.quota).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: '取消云服务' }));
+    expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
+      .not.toBeInTheDocument();
+    expect(client.recognize).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await userEvent.click(await screen.findByRole('button', { name: '同意并继续' }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: true,
+    });
+    await screen.findByLabelText('识别原文');
+    expect(client.recognize).toHaveBeenCalledOnce();
+
+    await userEvent.click(screen.getByRole('button', { name: '关闭识别面板' }));
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
+      .not.toBeInTheDocument();
+    await waitFor(() => expect(client.recognize).toHaveBeenCalledTimes(2));
+  });
+
+  it('reuses the exact exported Blob for translation and retry', async () => {
+    const translated: RecognitionResult = {
+      ...ocrResult,
+      translatedText: 'translated',
     };
-    render(<ScreenshotEditor sourceUrl="" bridge={createBridge()} cozeService={cozeService} />);
-    const selectionSurface = screen.getByTestId('selection-surface');
-    fireEvent.pointerDown(selectionSurface, { clientX: 20, clientY: 20, pointerId: 1 });
-    fireEvent.pointerMove(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
-    fireEvent.pointerUp(selectionSurface, { clientX: 220, clientY: 160, pointerId: 1 });
+    const recognize = vi.fn()
+      .mockResolvedValueOnce(ocrResult)
+      .mockResolvedValueOnce(translated)
+      .mockResolvedValueOnce(translated);
+    const client = createFakeCloudClient({ recognize });
+    const toBlob = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob');
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={createBridge()}
+        cloudClient={client}
+      />,
+    );
+    selectRegion();
+
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await screen.findByLabelText('识别原文');
+    const originalBlob = recognize.mock.calls[0]?.[1];
+    await userEvent.click(screen.getByRole('button', { name: '翻译识别结果' }));
+    await screen.findByLabelText('翻译结果');
+    await userEvent.click(screen.getByRole('button', { name: '重试翻译' }));
+
+    await waitFor(() => expect(recognize).toHaveBeenCalledTimes(3));
+    expect(recognize.mock.calls.map((call) => call[0])).toEqual([
+      'ocr',
+      'translate',
+      'translate',
+    ]);
+    expect(recognize.mock.calls.every((call) => call[1] === originalBlob)).toBe(true);
+    expect(toBlob).toHaveBeenCalledOnce();
+  });
+
+  it('keeps recognition content when quota loading fails', async () => {
+    const client = createFakeCloudClient({
+      quota: vi.fn().mockRejectedValue(
+        new CloudClientError('NETWORK_UNAVAILABLE', 'unavailable'),
+      ),
+    });
+    render(
+      <ScreenshotEditor sourceUrl="" bridge={createBridge()} cloudClient={client} />,
+    );
+    selectRegion();
 
     await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('服务不可用');
+    expect(await screen.findByLabelText('识别原文')).toHaveTextContent('识别结果');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('云服务额度')).not.toBeInTheDocument();
+  });
+
+  it('aborts an in-flight request when Escape closes the panel before the overlay', async () => {
+    let requestSignal: AbortSignal | undefined;
+    const recognize = vi.fn((_mode, _blob, signal: AbortSignal) => {
+      requestSignal = signal;
+      return new Promise<RecognitionResult>((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new CloudClientError('ABORTED', 'cancelled'));
+        });
+      });
+    });
+    const bridge = createBridge();
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={bridge}
+        cloudClient={createFakeCloudClient({ recognize })}
+      />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await screen.findByText('正在识别…');
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(requestSignal?.aborted).toBe(true);
+    expect(screen.queryByLabelText('识别结果')).not.toBeInTheDocument();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
     expect(screen.getByText('200 × 140')).toBeInTheDocument();
-    expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'annotating');
+  });
+
+  it('aborts an in-flight request on unmount', async () => {
+    let requestSignal: AbortSignal | undefined;
+    const recognize = vi.fn((_mode, _blob, signal: AbortSignal) => {
+      requestSignal = signal;
+      return new Promise<RecognitionResult>((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new CloudClientError('ABORTED', 'cancelled'));
+        });
+      });
+    });
+    const { unmount } = render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={createBridge()}
+        cloudClient={createFakeCloudClient({ recognize })}
+      />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await waitFor(() => expect(requestSignal).toBeDefined());
+
+    unmount();
+
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it('Escape dismisses privacy with no request and does not close the overlay', async () => {
+    const bridge = createBridge({
+      loadSettings: vi.fn().mockResolvedValue({
+        shortcut: 'Alt+Shift+A',
+        cloudPrivacyAcknowledged: false,
+      }),
+    });
+    const client = createFakeCloudClient();
+    render(
+      <ScreenshotEditor sourceUrl="" bridge={bridge} cloudClient={client} />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await screen.findByRole('dialog', { name: '云服务隐私提示' });
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
+      .not.toBeInTheDocument();
+    expect(client.recognize).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('draws a normalized green highlight inside the current selection', async () => {
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={createBridge()}
+        cloudClient={createFakeCloudClient()}
+      />,
+    );
+    selectRegion({ x: 20, y: 30 }, { x: 220, y: 130 });
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    const block = await screen.findByText('识别结果', {
+      selector: '.recognition-panel__block',
+    });
+
+    fireEvent.mouseEnter(block);
+
+    expect(screen.getByTestId('recognition-highlight')).toHaveStyle({
+      left: '40px',
+      top: '50px',
+      width: '60px',
+      height: '40px',
+    });
   });
 
   it('pins the selection and shows the copied share fallback', async () => {

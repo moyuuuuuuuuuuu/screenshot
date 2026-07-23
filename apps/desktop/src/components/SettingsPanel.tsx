@@ -64,26 +64,6 @@ export function SettingsPanel({ initialSettings, onSave, onClose }: SettingsPane
       >
         恢复默认
       </button>
-      <label>
-        <span>Coze Token</span>
-        <input
-          type="password"
-          value={settings.coze.token}
-          autoComplete="off"
-          onChange={(event) => setSettings((current) => ({
-            ...current, coze: { ...current.coze, token: event.currentTarget.value },
-          }))}
-        />
-      </label>
-      <label>
-        <span>Coze Workflow ID</span>
-        <input
-          value={settings.coze.workflowId}
-          onChange={(event) => setSettings((current) => ({
-            ...current, coze: { ...current.coze, workflowId: event.currentTarget.value },
-          }))}
-        />
-      </label>
       {error ? <div role="alert">{error}</div> : null}
       <footer>
         <button type="button" onClick={onClose}>取消</button>

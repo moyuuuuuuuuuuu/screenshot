@@ -1,6 +1,7 @@
 import type {
   QuotaConsumption,
   QuotaOperation,
+  QuotaStatus,
   QuotaStore,
 } from './quota-store.js';
 
@@ -9,7 +10,7 @@ const utc8OffsetMilliseconds = 8 * 60 * 60 * 1_000;
 const limits: Readonly<Record<QuotaOperation, number>> = {
   ocr: 20,
   translate: 10,
-};
+} as const;
 
 type Counter = {
   day: string;
@@ -52,6 +53,28 @@ export class MemoryQuotaStore implements QuotaStore {
       remaining: limit - counter.consumed,
       resetsAt: period.resetsAt,
     };
+  }
+
+  async status(deviceId: string, nowMilliseconds: number): Promise<QuotaStatus> {
+    this.sweepExpired(nowMilliseconds);
+    const period = getUtc8Period(nowMilliseconds);
+    return {
+      ocr: {
+        limit: 20,
+        remaining: this.remaining(deviceId, 'ocr', period.day),
+      },
+      translate: {
+        limit: 10,
+        remaining: this.remaining(deviceId, 'translate', period.day),
+      },
+      resetsAt: period.resetsAt,
+    };
+  }
+
+  private remaining(deviceId: string, operation: QuotaOperation, day: string): number {
+    const counter = this.counters.get(`${deviceId}\n${operation}`);
+    const consumed = counter?.day === day ? counter.consumed : 0;
+    return Math.max(0, limits[operation] - consumed);
   }
 
   private sweepExpired(nowMilliseconds: number): void {

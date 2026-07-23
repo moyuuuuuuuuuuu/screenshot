@@ -22,10 +22,7 @@ export type LongCaptureResult = Readonly<{
 
 export type AppSettings = Readonly<{
   shortcut: string;
-  coze: Readonly<{
-    token: string;
-    workflowId: string;
-  }>;
+  cloudPrivacyAcknowledged: boolean;
 }>;
 
 export type ShareOutcome = 'nativeShared' | 'copiedFallback';
@@ -44,6 +41,7 @@ export interface DesktopBridge {
   finishLongCapture(): Promise<void>;
   cancelLongCapture(): Promise<void>;
   getLongCaptureProgress(): Promise<LongCaptureProgress>;
+  getCloudDeviceId(): Promise<string>;
   loadSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
   pinPng(blob: Blob, bounds: Rect): Promise<string>;

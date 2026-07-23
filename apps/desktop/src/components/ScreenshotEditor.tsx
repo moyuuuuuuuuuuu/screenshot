@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
+import type { AppSettings, DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
+import {
+  CloudClientError,
+  createCloudClient,
+  type CloudClient,
+  type QuotaResult,
+  type TextBlock,
+} from '../cloud/cloud-client';
 import { captureSessionReducer, initialCaptureSession } from '../domain/capture-session';
 import {
   addAnnotation,
@@ -21,13 +28,21 @@ import { SelectionOverlay } from './SelectionOverlay';
 import { EmojiPicker } from './EmojiPicker';
 import { TextEditor } from './TextEditor';
 import { WechatToolbar, type WechatToolbarAction } from './WechatToolbar';
-import { ServiceResult } from './ServiceResult';
-import { createCozeService, type CozeService } from '../services/coze-service';
+import {
+  RecognitionPanel,
+  type RecognitionPanelState,
+} from './RecognitionPanel';
 
 type ScreenshotEditorProps = Readonly<{
   sourceUrl: string;
   bridge: DesktopBridge;
-  cozeService?: CozeService;
+  cloudClient?: CloudClient;
+}>;
+
+type PendingPrivacy = Readonly<{
+  image: Blob;
+  mode: 'ocr' | 'translate';
+  settings: AppSettings;
 }>;
 
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
@@ -50,12 +65,24 @@ function errorMessage(error: unknown): string {
   return '未知错误';
 }
 
-export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeService }: ScreenshotEditorProps) {
-  const cozeService = useMemo(
-    () => providedCozeService ?? createCozeService({
-      getConfig: async () => (await bridge.loadSettings()).coze,
+function safeCloudErrorMessage(error: unknown): string {
+  return error instanceof CloudClientError
+    ? error.message
+    : 'The cloud service is unavailable.';
+}
+
+export function ScreenshotEditor({
+  sourceUrl,
+  bridge,
+  cloudClient: providedCloudClient,
+}: ScreenshotEditorProps) {
+  const cloudClient = useMemo(
+    () => providedCloudClient ?? createCloudClient({
+      apiUrl: import.meta.env.VITE_CLOUD_API_URL ?? '',
+      requestKey: import.meta.env.VITE_CLOUD_REQUEST_KEY ?? '',
+      getDeviceId: () => bridge.getCloudDeviceId(),
     }),
-    [bridge, providedCozeService],
+    [bridge, providedCloudClient],
   );
   const [captureSession, dispatchCapture] = useReducer(
     captureSessionReducer,
@@ -68,7 +95,11 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   const [textPosition, setTextPosition] = useState<Point | null>(null);
   const [selectedEmoji, setSelectedEmoji] = useState('😊');
   const [error, setError] = useState<string | null>(null);
-  const [serviceResult, setServiceResult] = useState<{ title: string; text: string; translatable: boolean } | null>(null);
+  const [recognitionState, setRecognitionState] =
+    useState<RecognitionPanelState | null>(null);
+  const [quota, setQuota] = useState<QuotaResult | null>(null);
+  const [pendingPrivacy, setPendingPrivacy] = useState<PendingPrivacy | null>(null);
+  const [highlightedBlock, setHighlightedBlock] = useState<TextBlock | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [drawingPreview, setDrawingPreview] = useState<DrawingSession | null>(null);
   const [penWidth, setPenWidth] = useState(4);
@@ -86,7 +117,10 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   const longCaptureSource = useRef<Blob | null>(null);
   const longCaptureCancelled = useRef(false);
   const longCaptureCancelInFlight = useRef(false);
-  const serviceSource = useRef<Blob | null>(null);
+  const cloudSource = useRef<Blob | null>(null);
+  const privacyAcknowledged = useRef<boolean | null>(null);
+  const activeCloudRequest = useRef<AbortController | null>(null);
+  const cloudRequestSequence = useRef(0);
   const toolbarPositioner = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,6 +132,12 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
 
   useEffect(() => () => {
     if (generatedSourceUrl.current) URL.revokeObjectURL(generatedSourceUrl.current);
+  }, []);
+
+  useEffect(() => () => {
+    cloudRequestSequence.current += 1;
+    activeCloudRequest.current?.abort();
+    activeCloudRequest.current = null;
   }, []);
 
   useEffect(() => {
@@ -332,19 +372,25 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
   }, [bridge, longCaptureProgress, selection]);
 
   const resetEditorSession = useCallback(() => {
+    cloudRequestSequence.current += 1;
+    activeCloudRequest.current?.abort();
+    activeCloudRequest.current = null;
     dispatchCapture({ type: 'sessionReset' });
     setHistory(createEditorHistory());
     setActiveTool('rectangle');
     setTextPosition(null);
     setError(null);
-    setServiceResult(null);
+    setRecognitionState(null);
+    setQuota(null);
+    setPendingPrivacy(null);
+    setHighlightedBlock(null);
     setToast(null);
     setDrawingPreview(null);
     setLongCaptureBounds(null);
     setLongCaptureProgress(null);
     drawingSession.current = null;
     longCaptureSource.current = null;
-    serviceSource.current = null;
+    cloudSource.current = null;
     if (generatedSourceUrl.current) {
       URL.revokeObjectURL(generatedSourceUrl.current);
       generatedSourceUrl.current = null;
@@ -363,35 +409,122 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     }
   }, [bridge, resetEditorSession]);
 
-  const runOcr = useCallback(async () => {
-    dispatchCapture({ type: 'serviceStarted', service: 'ocr' });
+  const performRecognition = useCallback(async (
+    mode: 'ocr' | 'translate',
+    image: Blob,
+  ) => {
+    activeCloudRequest.current?.abort();
+    const controller = new AbortController();
+    activeCloudRequest.current = controller;
+    const requestSequence = ++cloudRequestSequence.current;
+    dispatchCapture({ type: 'serviceStarted', service: mode });
     setError(null);
+    setQuota(null);
+    setHighlightedBlock(null);
+    setRecognitionState({ status: 'loading', mode });
+
+    try {
+      const result = await cloudClient.recognize(mode, image, controller.signal);
+      if (requestSequence !== cloudRequestSequence.current) return;
+      setRecognitionState({ status: 'success', mode, result });
+      try {
+        const nextQuota = await cloudClient.quota(controller.signal);
+        if (requestSequence === cloudRequestSequence.current) {
+          setQuota(nextQuota);
+        }
+      } catch {
+        // Quota status is supplementary and never replaces recognition content.
+      }
+    } catch (cloudError) {
+      if (requestSequence !== cloudRequestSequence.current) return;
+      if (cloudError instanceof CloudClientError && cloudError.code === 'ABORTED') {
+        return;
+      }
+      setRecognitionState({
+        status: 'error',
+        mode,
+        message: safeCloudErrorMessage(cloudError),
+      });
+    } finally {
+      if (requestSequence === cloudRequestSequence.current) {
+        activeCloudRequest.current = null;
+        dispatchCapture({ type: 'serviceFinished' });
+      }
+    }
+  }, [cloudClient]);
+
+  const closeRecognitionPanel = useCallback(() => {
+    cloudRequestSequence.current += 1;
+    activeCloudRequest.current?.abort();
+    activeCloudRequest.current = null;
+    setRecognitionState(null);
+    setQuota(null);
+    setHighlightedBlock(null);
+    dispatchCapture({ type: 'serviceFinished' });
+  }, []);
+
+  const runOcr = useCallback(async () => {
     try {
       const image = await exportSelection();
-      serviceSource.current = image;
-      const result = await cozeService.ocr(image);
-      setServiceResult({ title: '文字识别', text: result.text, translatable: true });
-    } catch (serviceError) {
-      setError(errorMessage(serviceError));
-    } finally {
-      dispatchCapture({ type: 'serviceFinished' });
-    }
-  }, [cozeService, exportSelection]);
+      cloudSource.current = image;
+      if (privacyAcknowledged.current === true) {
+        void performRecognition('ocr', image);
+        return;
+      }
 
-  const runTranslation = useCallback(async (targetLanguage: string) => {
-    const image = serviceSource.current;
-    if (!image) return;
-    dispatchCapture({ type: 'serviceStarted', service: 'translate' });
-    setError(null);
-    try {
-      const result = await cozeService.translate(image, targetLanguage);
-      setServiceResult({ title: '翻译结果', text: result.text, translatable: false });
-    } catch (serviceError) {
-      setError(errorMessage(serviceError));
-    } finally {
-      dispatchCapture({ type: 'serviceFinished' });
+      const settings = await bridge.loadSettings();
+      privacyAcknowledged.current = settings.cloudPrivacyAcknowledged;
+      if (settings.cloudPrivacyAcknowledged) {
+        void performRecognition('ocr', image);
+      } else {
+        setPendingPrivacy({ image, mode: 'ocr', settings });
+      }
+    } catch {
+      setError('无法准备云服务请求，请重试');
     }
-  }, [cozeService]);
+  }, [bridge, exportSelection, performRecognition]);
+
+  const acceptPrivacy = useCallback(async () => {
+    const pending = pendingPrivacy;
+    if (!pending) return;
+    try {
+      await bridge.updateSettings({
+        shortcut: pending.settings.shortcut,
+        cloudPrivacyAcknowledged: true,
+      });
+      privacyAcknowledged.current = true;
+      setPendingPrivacy(null);
+      void performRecognition(pending.mode, pending.image);
+    } catch {
+      setError('无法保存隐私设置，未上传截图');
+    }
+  }, [bridge, pendingPrivacy, performRecognition]);
+
+  const cancelPrivacy = useCallback(() => {
+    setPendingPrivacy(null);
+    cloudSource.current = null;
+  }, []);
+
+  const runTranslation = useCallback(() => {
+    const image = cloudSource.current;
+    if (image) void performRecognition('translate', image);
+  }, [performRecognition]);
+
+  const retryRecognition = useCallback(() => {
+    const image = cloudSource.current;
+    if (image && recognitionState) {
+      void performRecognition(recognitionState.mode, image);
+    }
+  }, [performRecognition, recognitionState]);
+
+  const copyRecognitionText = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast('已复制文字');
+    } catch {
+      setError('复制文字失败，请重试');
+    }
+  }, []);
 
   const pinSelection = useCallback(async () => {
     if (!selection) return;
@@ -439,6 +572,10 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
       if (event.key === 'Escape') {
         if (longCaptureProgress || longCaptureCancelInFlight.current) {
           void cancelLongCaptureAndClose();
+        } else if (pendingPrivacy) {
+          cancelPrivacy();
+        } else if (recognitionState) {
+          closeRecognitionPanel();
         } else {
           void bridge.closeOverlay();
         }
@@ -460,7 +597,17 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bridge, cancelLongCaptureAndClose, copyAndClose, longCaptureProgress, save]);
+  }, [
+    bridge,
+    cancelLongCaptureAndClose,
+    cancelPrivacy,
+    closeRecognitionPanel,
+    copyAndClose,
+    longCaptureProgress,
+    pendingPrivacy,
+    recognitionState,
+    save,
+  ]);
 
   const showToolbar = selection && selection.width > 0 && selection.height > 0;
   const viewportBounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
@@ -543,6 +690,19 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
           rect: nextSelection,
         })}
       />
+      {highlightedBlock && selection ? (
+        <div
+          className="recognition-highlight"
+          data-testid="recognition-highlight"
+          aria-hidden="true"
+          style={{
+            left: selection.x + highlightedBlock.x * selection.width,
+            top: selection.y + highlightedBlock.y * selection.height,
+            width: highlightedBlock.width * selection.width,
+            height: highlightedBlock.height * selection.height,
+          }}
+        />
+      ) : null}
       {textPosition ? (
         <TextEditor
           position={textPosition}
@@ -581,15 +741,39 @@ export function ScreenshotEditor({ sourceUrl, bridge, cozeService: providedCozeS
         </div>
       ) : null}
       {error ? <div className="editor-alert" role="alert">{error}</div> : null}
-      {captureSession.mode === 'serviceBusy' ? (
-        <div className="service-busy" role="status">正在处理…</div>
+      {pendingPrivacy ? (
+        <div className="privacy-dialog-backdrop">
+          <section
+            className="privacy-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="云服务隐私提示"
+          >
+            <h2>云服务隐私提示</h2>
+            <p>
+              所选截图将发送到本服务及第三方 Coze（扣子）平台，
+              用于在线 OCR 或翻译处理。
+            </p>
+            <div className="privacy-dialog__actions">
+              <button type="button" aria-label="取消云服务" onClick={cancelPrivacy}>
+                取消
+              </button>
+              <button type="button" aria-label="同意并继续" onClick={() => void acceptPrivacy()}>
+                同意并继续
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
-      {serviceResult ? (
-        <ServiceResult
-          title={serviceResult.title}
-          text={serviceResult.text}
-          onClose={() => setServiceResult(null)}
-          {...(serviceResult.translatable ? { onTranslate: runTranslation } : {})}
+      {recognitionState ? (
+        <RecognitionPanel
+          state={recognitionState}
+          quota={quota}
+          onClose={closeRecognitionPanel}
+          onRetry={retryRecognition}
+          onCopy={(text) => void copyRecognitionText(text)}
+          onTranslate={runTranslation}
+          onBlockHighlight={setHighlightedBlock}
         />
       ) : null}
       {toast ? <div className="editor-toast" role="status">{toast}</div> : null}

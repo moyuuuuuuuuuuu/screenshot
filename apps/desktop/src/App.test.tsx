@@ -172,7 +172,7 @@ describe('App', () => {
   it('opens local settings when requested from the tray', async () => {
     tauriInvoke.mockResolvedValueOnce({
       shortcut: 'Alt+Shift+A',
-      coze: { token: '', workflowId: '' },
+      cloudPrivacyAcknowledged: false,
     });
     render(<App />);
     await act(async () => undefined);

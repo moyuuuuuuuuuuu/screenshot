@@ -46,7 +46,12 @@ function createHarness(overrides: Partial<ServerOptions> = {}) {
     remaining: 19,
     resetsAt: '2026-07-23T16:00:00.000Z',
   }));
-  const quotaStore: QuotaStore = { consume };
+  const status = vi.fn<QuotaStore['status']>(async () => ({
+    ocr: { limit: 20, remaining: 20 },
+    translate: { limit: 10, remaining: 10 },
+    resetsAt: '2026-07-23T16:00:00.000Z',
+  }));
+  const quotaStore: QuotaStore = { consume, status };
   const auditEvents: AuditEvent[] = [];
   const auditLogger: AuditLogger = {
     log(event) {
@@ -62,7 +67,7 @@ function createHarness(overrides: Partial<ServerOptions> = {}) {
     requestIdFactory: () => `server-request-${(requestNumber += 1)}`,
     ...overrides,
   });
-  return { app, recognize, consume, auditEvents };
+  return { app, recognize, consume, status, auditEvents };
 }
 
 function signedHeaders(
@@ -77,6 +82,20 @@ function signedHeaders(
     'x-request-timestamp': timestamp,
     'x-request-signature': createRequestSignature(
       { deviceId: id, timestamp, mode, image },
+      signingSecret,
+    ),
+  };
+}
+
+function signedQuotaHeaders(
+  timestamp = String(now),
+  id = deviceId,
+): Record<string, string> {
+  return {
+    'x-device-id': id,
+    'x-request-timestamp': timestamp,
+    'x-request-signature': createRequestSignature(
+      { deviceId: id, timestamp, mode: 'quota', image: new Uint8Array() },
       signingSecret,
     ),
   };
@@ -174,6 +193,104 @@ describe('cloud OCR and translation API', () => {
 
     expect(response.statusCode).toBe(413);
     expect(response.json()).toMatchObject({ error: { code: 'IMAGE_TOO_LARGE' } });
+    expect(consume).not.toHaveBeenCalled();
+    expect(recognize).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+});
+
+describe('cloud quota API', () => {
+  it('returns the exact full quota shape without consuming quota or calling the provider', async () => {
+    const { app, recognize, consume, status } = createHarness();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/quota',
+      headers: signedQuotaHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ocr: { limit: 20, remaining: 20 },
+      translate: { limit: 10, remaining: 10 },
+      resetsAt: '2026-07-23T16:00:00.000Z',
+    });
+    expect(status).toHaveBeenCalledWith(deviceId, now);
+    expect(consume).not.toHaveBeenCalled();
+    expect(recognize).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('returns current independent counts from the read-only store status', async () => {
+    const status = vi.fn<QuotaStore['status']>(async () => ({
+      ocr: { limit: 20, remaining: 7, internalCounterKey: 'ocr-private' },
+      translate: { limit: 10, remaining: 3, internalCounterKey: 'translate-private' },
+      resetsAt: '2026-07-23T16:00:00.000Z',
+      internalDeviceKey: 'device-private',
+    }));
+    const consume = vi.fn<QuotaStore['consume']>();
+    const { app, recognize } = createHarness({ quotaStore: { consume, status } });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/quota',
+      headers: signedQuotaHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ocr: { limit: 20, remaining: 7 },
+      translate: { limit: 10, remaining: 3 },
+      resetsAt: '2026-07-23T16:00:00.000Z',
+    });
+    expect(consume).not.toHaveBeenCalled();
+    expect(recognize).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('rejects invalid signatures and replays before reading quota', async () => {
+    const { app, recognize, consume, status } = createHarness();
+    const headers = signedQuotaHeaders();
+
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/v1/quota',
+      headers: { ...headers, 'x-request-signature': '0'.repeat(64) },
+    });
+    const accepted = await app.inject({ method: 'GET', url: '/v1/quota', headers });
+    const replay = await app.inject({ method: 'GET', url: '/v1/quota', headers });
+
+    expect(invalid.statusCode).toBe(401);
+    expect(invalid.json()).toMatchObject({ error: { code: 'INVALID_SIGNATURE' } });
+    expect(accepted.statusCode).toBe(200);
+    expect(replay.statusCode).toBe(401);
+    expect(replay.json()).toMatchObject({ error: { code: 'INVALID_SIGNATURE' } });
+    expect(status).toHaveBeenCalledOnce();
+    expect(consume).not.toHaveBeenCalled();
+    expect(recognize).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('applies the per-IP rate limiter without consuming quota or calling the provider', async () => {
+    const { app, recognize, consume, status } = createHarness();
+    let response;
+
+    for (let request = 0; request < 31; request += 1) {
+      response = await app.inject({
+        method: 'GET',
+        url: '/v1/quota',
+        headers: signedQuotaHeaders(String(now + request)),
+        remoteAddress: '203.0.113.42',
+      });
+    }
+
+    expect(response?.statusCode).toBe(429);
+    expect(response?.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
+    expect(status).toHaveBeenCalledTimes(30);
     expect(consume).not.toHaveBeenCalled();
     expect(recognize).not.toHaveBeenCalled();
 
@@ -416,7 +533,8 @@ describe('image validation and quota enforcement', () => {
       remaining: 0,
       resetsAt: '2026-07-23T16:00:00.000Z',
     }));
-    const { app, recognize } = createHarness({ quotaStore: { consume } });
+    const status = vi.fn<QuotaStore['status']>();
+    const { app, recognize } = createHarness({ quotaStore: { consume, status } });
     const response = await app.inject({
       method: 'POST',
       url: '/v1/ocr',
@@ -427,6 +545,7 @@ describe('image validation and quota enforcement', () => {
     expect(response.statusCode).toBe(429);
     expect(response.json()).toMatchObject({ error: { code: 'QUOTA_EXCEEDED' } });
     expect(consume).toHaveBeenCalledOnce();
+    expect(status).not.toHaveBeenCalled();
     expect(recognize).not.toHaveBeenCalled();
 
     await app.close();

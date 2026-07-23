@@ -11,6 +11,8 @@ const progressStates = new Set<LongCaptureProgress['state']>([
   'preparing', 'observing', 'scrolling', 'stabilizing', 'matching',
   'pausedReverse', 'warning', 'completed', 'partial', 'cancelled', 'failed',
 ]);
+const lowercaseUuidV4Pattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
   if (!value || typeof value !== 'object') throw new Error('invalid long capture progress');
@@ -30,12 +32,10 @@ function parseLongCaptureProgress(value: unknown): LongCaptureProgress {
 function parseSettings(value: unknown): AppSettings {
   if (!value || typeof value !== 'object') throw new Error('invalid settings');
   const settings = value as Record<string, unknown>;
-  const coze = settings.coze as Record<string, unknown> | undefined;
   if (
-    typeof settings.shortcut !== 'string'
-    || !coze
-    || typeof coze.token !== 'string'
-    || typeof coze.workflowId !== 'string'
+    Object.keys(settings).length !== 2
+    || typeof settings.shortcut !== 'string'
+    || typeof settings.cloudPrivacyAcknowledged !== 'boolean'
   ) throw new Error('invalid settings');
   return settings as AppSettings;
 }
@@ -128,12 +128,21 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
     async getLongCaptureProgress() {
       return parseLongCaptureProgress(await invoke('long_capture_progress'));
     },
+    async getCloudDeviceId() {
+      const value = await invoke('get_cloud_device_id');
+      if (typeof value !== 'string' || !lowercaseUuidV4Pattern.test(value)) {
+        throw new Error('get_cloud_device_id returned an invalid ID');
+      }
+      return value;
+    },
     async loadSettings() {
       return parseSettings(await invoke('load_settings'));
     },
     async updateSettings(settings) {
       await invoke('update_shortcut', { shortcut: settings.shortcut });
-      return parseSettings(await invoke('update_coze_config', { config: settings.coze }));
+      return parseSettings(await invoke('update_cloud_privacy_acknowledgement', {
+        acknowledged: settings.cloudPrivacyAcknowledged,
+      }));
     },
     async pinPng(blob, bounds) {
       const result = await invoke('pin_png', { pngBytes: await blobBytes(blob), bounds });

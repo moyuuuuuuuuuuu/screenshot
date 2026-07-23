@@ -10,7 +10,7 @@ describe('SettingsPanel', () => {
       <SettingsPanel
         initialSettings={{
           shortcut: 'Alt+Shift+A',
-          coze: { token: '', workflowId: '' },
+          cloudPrivacyAcknowledged: false,
         }}
         onSave={onSave}
         onClose={vi.fn()}
@@ -26,5 +26,30 @@ describe('SettingsPanel', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '恢复默认快捷键' }));
     expect(recorder).toHaveTextContent('Alt+Shift+A');
+  });
+
+  it('contains no Coze token or workflow controls and preserves privacy state on save', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SettingsPanel
+        initialSettings={{
+          shortcut: 'Alt+Shift+A',
+          cloudPrivacyAcknowledged: true,
+        }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/coze/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/workflow/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '保存设置' }));
+    expect(onSave).toHaveBeenCalledWith({
+      shortcut: 'Alt+Shift+A',
+      cloudPrivacyAcknowledged: true,
+    });
   });
 });

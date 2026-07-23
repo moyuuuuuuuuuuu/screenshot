@@ -1,31 +1,30 @@
-use std::{fs, sync::Mutex};
+use std::{fs, path::Path, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 pub const DEFAULT_SHORTCUT: &str = "Alt+Shift+A";
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CozeConfig {
-    pub token: String,
-    pub workflow_id: String,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    #[serde(default = "default_shortcut")]
     pub shortcut: String,
-    pub coze: CozeConfig,
+    #[serde(default)]
+    pub cloud_privacy_acknowledged: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             shortcut: DEFAULT_SHORTCUT.to_string(),
-            coze: CozeConfig::default(),
+            cloud_privacy_acknowledged: false,
         }
     }
+}
+
+fn default_shortcut() -> String {
+    DEFAULT_SHORTCUT.to_string()
 }
 
 #[derive(Default)]
@@ -54,15 +53,31 @@ fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 
 pub fn read_settings(app: &AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(app)?;
+    read_settings_from_path(&path)
+}
+
+fn read_settings_from_path(path: &Path) -> Result<AppSettings, String> {
     if !path.exists() {
         return Ok(AppSettings::default());
     }
     let json = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&json).map_err(|error| error.to_string())
+    let stored: serde_json::Value =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    let settings: AppSettings =
+        serde_json::from_value(stored.clone()).map_err(|error| error.to_string())?;
+    let sanitized = serde_json::to_value(&settings).map_err(|error| error.to_string())?;
+    if stored != sanitized {
+        persist_settings_to_path(path, &settings)?;
+    }
+    Ok(settings)
 }
 
 fn persist_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     let path = settings_path(app)?;
+    persist_settings_to_path(&path, settings)
+}
+
+fn persist_settings_to_path(path: &Path, settings: &AppSettings) -> Result<(), String> {
     let parent = path.parent().ok_or("invalid settings path")?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let json = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
@@ -94,13 +109,13 @@ pub fn update_shortcut(
 }
 
 #[tauri::command]
-pub fn update_coze_config(
+pub fn update_cloud_privacy_acknowledgement(
     app: AppHandle,
     state: State<'_, SettingsState>,
-    config: CozeConfig,
+    acknowledged: bool,
 ) -> Result<AppSettings, String> {
     let mut settings = state.snapshot()?;
-    settings.coze = config;
+    settings.cloud_privacy_acknowledged = acknowledged;
     persist_settings(&app, &settings)?;
     state.replace(settings.clone())?;
     Ok(settings)
@@ -108,12 +123,70 @@ pub fn update_coze_config(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     #[test]
-    fn defaults_to_the_approved_shortcut_without_cloud_credentials() {
+    fn defaults_to_the_approved_shortcut_without_cloud_acknowledgement() {
         let settings = super::AppSettings::default();
 
         assert_eq!(settings.shortcut, "Alt+Shift+A");
-        assert!(settings.coze.token.is_empty());
-        assert!(settings.coze.workflow_id.is_empty());
+        assert!(!settings.cloud_privacy_acknowledged);
+    }
+
+    #[test]
+    fn sanitizes_and_rewrites_legacy_coze_settings_without_losing_the_shortcut() {
+        let path = temporary_settings_path("legacy");
+        fs::write(
+            &path,
+            r#"{
+  "shortcut": "Ctrl+Alt+X",
+  "coze": {
+    "token": "legacy-sensitive-token",
+    "workflowId": "legacy-sensitive-workflow"
+  }
+}"#,
+        )
+        .expect("legacy settings");
+
+        let settings = super::read_settings_from_path(&path).expect("sanitized settings");
+        let rewritten = fs::read_to_string(&path).expect("rewritten settings");
+        let rewritten_json: serde_json::Value =
+            serde_json::from_str(&rewritten).expect("valid rewritten JSON");
+
+        assert_eq!(settings.shortcut, "Ctrl+Alt+X");
+        assert!(!settings.cloud_privacy_acknowledged);
+        assert_eq!(
+            rewritten_json,
+            serde_json::json!({
+                "shortcut": "Ctrl+Alt+X",
+                "cloudPrivacyAcknowledged": false,
+            })
+        );
+        assert!(!rewritten.contains("legacy-sensitive-token"));
+        assert!(!rewritten.contains("legacy-sensitive-workflow"));
+        assert!(!rewritten.contains("coze"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn defaults_a_missing_acknowledgement_and_persists_updates() {
+        let path = temporary_settings_path("privacy");
+        fs::write(&path, r#"{"shortcut":"Alt+Shift+A"}"#).expect("settings");
+
+        let mut settings = super::read_settings_from_path(&path).expect("defaulted settings");
+        assert!(!settings.cloud_privacy_acknowledged);
+        settings.cloud_privacy_acknowledged = true;
+        super::persist_settings_to_path(&path, &settings).expect("persisted acknowledgement");
+
+        let reloaded = super::read_settings_from_path(&path).expect("reloaded settings");
+        assert!(reloaded.cloud_privacy_acknowledged);
+        let _ = fs::remove_file(path);
+    }
+
+    fn temporary_settings_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "screenshot-tool-d4-{label}-{}.json",
+            uuid::Uuid::new_v4()
+        ))
     }
 }

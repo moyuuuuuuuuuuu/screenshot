@@ -9,6 +9,7 @@ fn platform_name() -> &'static str {
 fn main() {
     tauri::Builder::default()
         .manage(screenshot_tool::app_state::AppState::default())
+        .manage(screenshot_tool::cloud_identity::CloudIdentityState::default())
         .manage(screenshot_tool::long_capture::LongCaptureRuntime::default())
         .manage(screenshot_tool::settings::SettingsState::default())
         .manage(screenshot_tool::pin_window::PinWindowState::default())
@@ -59,6 +60,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             platform_name,
+            screenshot_tool::cloud_identity::get_cloud_device_id,
             screenshot_tool::capture::capture_desktop,
             screenshot_tool::output::copy_png,
             screenshot_tool::output::save_png,
@@ -72,7 +74,7 @@ fn main() {
             screenshot_tool::long_capture::long_capture_progress,
             screenshot_tool::settings::load_settings,
             screenshot_tool::settings::update_shortcut,
-            screenshot_tool::settings::update_coze_config,
+            screenshot_tool::settings::update_cloud_privacy_acknowledgement,
             screenshot_tool::pin_window::pin_png,
             screenshot_tool::pin_window::get_pinned_png,
             screenshot_tool::pin_window::close_pin_window,

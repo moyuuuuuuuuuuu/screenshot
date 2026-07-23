@@ -2,10 +2,12 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import type { RecognitionMode } from '../providers/provider.js';
 
+export type RequestOperation = RecognitionMode | 'quota';
+
 export type RequestSignatureInput = Readonly<{
   deviceId: string;
   timestamp: string;
-  mode: RecognitionMode;
+  mode: RequestOperation;
   image: Uint8Array;
 }>;
 

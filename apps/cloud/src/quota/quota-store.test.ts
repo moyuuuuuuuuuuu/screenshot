@@ -81,6 +81,34 @@ describe('MemoryQuotaStore', () => {
     });
   });
 
+  it('reports full independent remaining counts for a new device without consuming quota', async () => {
+    const store = new MemoryQuotaStore();
+
+    await expect(store.status('new-device', utc8Midnight)).resolves.toEqual({
+      ocr: { limit: 20, remaining: 20 },
+      translate: { limit: 10, remaining: 10 },
+      resetsAt: '2026-07-23T16:00:00.000Z',
+    });
+    expect(store.entryCount).toBe(0);
+  });
+
+  it('reports current independent counts with the same reset and does not consume them', async () => {
+    const store = new MemoryQuotaStore();
+    await store.consume('device-a', 'ocr', utc8Midnight);
+    await store.consume('device-a', 'ocr', utc8Midnight);
+    await store.consume('device-a', 'translate', utc8Midnight);
+
+    const first = await store.status('device-a', utc8Midnight);
+    const second = await store.status('device-a', utc8Midnight);
+
+    expect(first).toEqual({
+      ocr: { limit: 20, remaining: 18 },
+      translate: { limit: 10, remaining: 9 },
+      resetsAt: '2026-07-23T16:00:00.000Z',
+    });
+    expect(second).toEqual(first);
+  });
+
   it('expires abandoned device counters at their UTC+8 reset time', async () => {
     const store = new MemoryQuotaStore();
     const beforeMidnight = utc8Midnight - 1;
