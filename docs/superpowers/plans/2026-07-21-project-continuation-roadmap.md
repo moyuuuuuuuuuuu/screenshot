@@ -384,10 +384,10 @@ Reject timestamps older than 5 minutes
 Never log image bytes, recognized text, translated text, tokens, or signatures
 ```
 
-- [ ] Test exact quota boundaries, reset time, replayed timestamps, per-IP bursts, and log redaction.
-- [ ] Implement an in-memory store for development and an interface ready for Redis in production.
-- [ ] Return `QUOTA_EXCEEDED`, `RATE_LIMITED`, and `INVALID_IMAGE` without provider calls.
-- [ ] Commit with `git commit -m "feat: enforce anonymous cloud quotas"`.
+- [x] Test exact quota boundaries, reset time, replayed timestamps, per-IP bursts, and log redaction.
+- [x] Implement an in-memory store for development and an interface ready for Redis in production.
+- [x] Return `QUOTA_EXCEEDED`, `RATE_LIMITED`, and `INVALID_IMAGE` without provider calls.
+- [x] Commit with `git commit -m "feat: enforce anonymous cloud quotas"`.
 
 ### Task D3: Coze Provider and Workflow Contract
 
@@ -555,3 +555,11 @@ Use this prompt on the next device:
 - Verified: cloud focused tests 5/5, workspace tests 111/111, root typecheck.
 - Blockers: manual long capture still has user-reported defects; fixes are intentionally deferred until the primary feature set is complete.
 - Next action: Task D2, write failing tests for anonymous quota boundaries, UTC+8 reset, request freshness, per-IP bursts, and log redaction.
+
+### 2026-07-23 10:40 — anonymous cloud protection
+
+- Branch: `main`
+- HEAD: `8984966 feat: enforce anonymous cloud quotas`
+- Verified: cloud tests 48/48, workspace tests 154/154, root typecheck, task-level security review.
+- Blockers: production multi-instance deployment still requires a Redis-backed quota/rate/replay store and trusted-proxy configuration; no Coze token/workflow is available for live validation.
+- Next action: Task D3, implement the Coze provider contract, environment validation, workflow setup guide, and mocked HTTP tests.
