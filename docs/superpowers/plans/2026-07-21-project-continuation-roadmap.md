@@ -319,7 +319,9 @@ Shortcut available / shortcut already registered
 - [ ] Verify Edge/Chrome, File Explorer, Windows Settings and one Electron application (release gate; automated build coverage is complete, physical Windows input matrix remains to be recorded).
 - [x] Commit with `git commit -m "feat: integrate automatic scrolling screenshots"`.
 
-Phase C acceptance (implementation complete; Windows application/input matrix pending):
+Phase C acceptance (implementation exists; final acceptance is still pending):
+
+> 2026-07-23 status: manual long capture still has user-reported defects. Defer further long-capture changes until the primary feature set is complete, then run a focused regression and Windows application/input acceptance pass. Do not treat the bullets below as fully accepted yet.
 
 - Selecting a scrollable region starts manual-scroll observation and can be stopped at any time.
 - Common browser and desktop content produces a usable long image without obvious duplicate seams.
@@ -357,11 +359,11 @@ export interface OcrTranslationProvider {
 }
 ```
 
-- [ ] Scaffold a strict TypeScript Fastify service with Vitest and workspace scripts.
-- [ ] Test `/v1/ocr`, `/v1/translate`, invalid MIME, images over 8MB, and stable error envelopes.
-- [ ] Implement only the Mock provider first and validate responses against Zod schemas.
-- [ ] Run `pnpm --filter @screenshot/cloud test -- --run` and root typecheck.
-- [ ] Commit with `git commit -m "feat: add mock OCR and translation API"`.
+- [x] Scaffold a strict TypeScript Fastify service with Vitest and workspace scripts.
+- [x] Test `/v1/ocr`, `/v1/translate`, invalid MIME, images over 8MB, and stable error envelopes.
+- [x] Implement only the Mock provider first and validate responses against Zod schemas.
+- [x] Run `pnpm --filter @screenshot/cloud test -- --run` and root typecheck.
+- [x] Commit with `git commit -m "feat: add mock OCR and translation API"`.
 
 ### Task D2: Anonymous Quota and Rate Limiting
 
@@ -545,3 +547,11 @@ Use this prompt on the next device:
 - Verified: 30 tests, TypeScript typecheck, Vite production build.
 - Blockers: none.
 - Next action: Task A2, write failing tests for `resizeSelection` and inline text commit/cancel.
+
+### 2026-07-23 10:06 — cloud API foundation
+
+- Branch: `main`
+- HEAD: `1e2bfcf fix: normalize cloud media type errors`
+- Verified: cloud focused tests 5/5, workspace tests 111/111, root typecheck.
+- Blockers: manual long capture still has user-reported defects; fixes are intentionally deferred until the primary feature set is complete.
+- Next action: Task D2, write failing tests for anonymous quota boundaries, UTC+8 reset, request freshness, per-IP bursts, and log redaction.
