@@ -1,4 +1,10 @@
-use std::{fmt, fs, path::Path, sync::Mutex};
+use std::{
+    fmt,
+    fs::{self, OpenOptions},
+    io::Write,
+    path::Path,
+    sync::Mutex,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -127,10 +133,71 @@ fn persist_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), Strin
 }
 
 fn persist_settings_to_path(path: &Path, settings: &AppSettings) -> Result<(), String> {
+    persist_settings_to_path_with_replacer(path, settings, replace_settings_file)
+}
+
+fn persist_settings_to_path_with_replacer(
+    path: &Path,
+    settings: &AppSettings,
+    replacer: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> Result<(), String> {
     let parent = path.parent().ok_or("invalid settings path")?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let json = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    let temporary = parent.join(format!(".settings-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(json.as_bytes())
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+        replacer(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_settings_file(temporary: &Path, destination: &Path) -> Result<(), String> {
+    fs::rename(temporary, destination).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn replace_settings_file(temporary: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary_wide = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            temporary_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -376,6 +443,37 @@ mod tests {
             registrar.registered,
             HashSet::from(["Alt+Shift+A".to_string()])
         );
+    }
+
+    #[test]
+    fn failed_atomic_replacement_leaves_the_previous_settings_file_intact() {
+        let path = temporary_settings_path("atomic-replace-failure");
+        fs::write(
+            &path,
+            r#"{"shortcut":"Alt+Shift+A","cloudPrivacyAcknowledged":true}"#,
+        )
+        .expect("existing settings");
+        let next = super::AppSettings {
+            shortcut: "Ctrl+Alt+X".to_string(),
+            cloud_privacy_acknowledged: true,
+        };
+
+        let result = super::persist_settings_to_path_with_replacer(
+            &path,
+            &next,
+            |temporary, destination| {
+                let staged = fs::read_to_string(temporary).expect("staged settings");
+                assert!(staged.contains("Ctrl+Alt+X"));
+                assert_eq!(destination, path);
+                Err("atomic replacement failed".to_string())
+            },
+        );
+
+        assert!(result.is_err());
+        let preserved = fs::read_to_string(&path).expect("preserved settings");
+        assert!(preserved.contains("Alt+Shift+A"));
+        assert!(!preserved.contains("Ctrl+Alt+X"));
+        let _ = fs::remove_file(path);
     }
 
     fn temporary_settings_path(label: &str) -> std::path::PathBuf {
