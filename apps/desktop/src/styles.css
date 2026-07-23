@@ -148,6 +148,8 @@ button { font: inherit; }
 .scroll-sidecar__actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .scroll-sidecar__actions button { display: grid; min-width: 0; height: 34px; padding: 7px; place-items: center; border: 0; border-radius: 6px; background: #fff; color: #42464a; box-shadow: 0 3px 12px rgba(0,0,0,.2); cursor: pointer; }
 .scroll-sidecar__actions button:last-child { color: #07c160; }
+.scroll-sidecar__actions button:disabled { opacity: 0.46; cursor: not-allowed; transform: scale(.94); box-shadow: none; }
+.scroll-sidecar[data-terminating="true"] .scroll-sidecar__actions button:disabled { background: #d9e2de; color: #7b8580; cursor: wait; }
 .scroll-sidecar__actions svg { width: 20px; height: 20px; }
 .scroll-sidecar__warning { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 8px; border-radius: 4px; background: rgba(25,25,25,.78); color: #fff; font-size: 11px; white-space: nowrap; }
 @media (max-width: 149px) { .scroll-sidecar__actions { grid-template-columns: repeat(2, 36px); justify-content: center; } }

@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { DesktopBridge } from '../bridge/desktop-bridge';
+import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
+import { createDesktopBridgeFixture } from '../test/desktop-bridge-fixture';
 import { ScrollCapturePreview } from './ScrollCapturePreview';
 
 const progressFixture = {
@@ -17,15 +18,23 @@ const progressFixture = {
   slowScrollWarning: false,
 } as const;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function bridge(): DesktopBridge {
-  return {
-    getLongCaptureProgress: vi.fn().mockResolvedValue(progressFixture),
-    requestLongCaptureTerminal: vi.fn().mockResolvedValue({
-      sessionId: 17,
-      action: 'finish',
-      status: 'accepted',
-    }),
-  } as unknown as DesktopBridge;
+  const desktop = createDesktopBridgeFixture();
+  desktop.getLongCaptureProgress = vi.fn().mockResolvedValue(progressFixture);
+  desktop.requestLongCaptureTerminal = vi.fn().mockResolvedValue({
+    sessionId: 17,
+    action: 'finish',
+    status: 'accepted',
+  });
+  return desktop;
 }
 
 describe('ScrollCapturePreview', () => {
@@ -143,4 +152,63 @@ describe('ScrollCapturePreview', () => {
     expect(container.querySelector('.scroll-sidecar'))
       .toHaveAttribute('data-terminating', 'false');
   });
+
+  it.each([
+    [
+      'an older session',
+      { ...progressFixture, sessionId: 17, revision: 9 },
+      { ...progressFixture, sessionId: 18, revision: 1 },
+    ],
+    [
+      'an older revision in the same session',
+      { ...progressFixture, sessionId: 18, revision: 1 },
+      { ...progressFixture, sessionId: 18, revision: 2 },
+    ],
+    [
+      'a late response from an older poll request',
+      { ...progressFixture, sessionId: 19, revision: 1 },
+      { ...progressFixture, sessionId: 18, revision: 2 },
+    ],
+  ] satisfies ReadonlyArray<readonly [string, LongCaptureProgress, LongCaptureProgress]>)(
+    'keeps the newer terminating snapshot after %s resolves late',
+    async (_scenario, lateProgress, newerProgress) => {
+      const firstPoll = deferred<LongCaptureProgress>();
+      const secondPoll = deferred<LongCaptureProgress>();
+      const desktop = bridge();
+      desktop.getLongCaptureProgress = vi.fn()
+        .mockReturnValueOnce(firstPoll.promise)
+        .mockReturnValueOnce(secondPoll.promise)
+        .mockImplementation(() => new Promise<LongCaptureProgress>(() => undefined));
+      desktop.requestLongCaptureTerminal = vi.fn().mockResolvedValue({
+        sessionId: 18,
+        action: 'finish',
+        status: 'accepted',
+      });
+      const { container } = render(<ScrollCapturePreview bridge={desktop} side="right" />);
+      await waitFor(() => expect(desktop.getLongCaptureProgress).toHaveBeenCalledTimes(2));
+
+      await act(async () => {
+        secondPoll.resolve(newerProgress);
+        await Promise.resolve();
+      });
+      fireEvent.click(screen.getByRole('button', { name: '完成长截图' }));
+      expect(desktop.requestLongCaptureTerminal).toHaveBeenCalledWith(18, 'finish');
+      expect(container.querySelector('.scroll-sidecar'))
+        .toHaveAttribute('data-terminating', 'true');
+
+      await act(async () => {
+        firstPoll.resolve({ ...lateProgress, slowScrollWarning: true });
+        await Promise.resolve();
+      });
+
+      expect(container.querySelector('.scroll-sidecar'))
+        .toHaveAttribute('data-terminating', 'true');
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      for (const button of screen.getAllByRole('button')) {
+        expect(button).toBeDisabled();
+      }
+      fireEvent.click(screen.getByRole('button', { name: '取消长截图' }));
+      expect(desktop.requestLongCaptureTerminal).toHaveBeenCalledTimes(1);
+    },
+  );
 });

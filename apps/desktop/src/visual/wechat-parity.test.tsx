@@ -3,17 +3,18 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
 import { ScrollCapturePreview } from '../components/ScrollCapturePreview';
 import { WechatToolbar } from '../components/WechatToolbar';
+import { createDesktopBridgeFixture } from '../test/desktop-bridge-fixture';
 import { WECHAT_REFERENCE_METRICS } from './wechat-reference-metrics';
 
 function previewBridge(progress: LongCaptureProgress): DesktopBridge {
-  return {
-    getLongCaptureProgress: vi.fn().mockResolvedValue(progress),
-    requestLongCaptureTerminal: vi.fn().mockResolvedValue({
-      sessionId: progress.sessionId,
-      action: 'cancel',
-      status: 'accepted',
-    }),
-  } as unknown as DesktopBridge;
+  const desktop = createDesktopBridgeFixture();
+  desktop.getLongCaptureProgress = vi.fn().mockResolvedValue(progress);
+  desktop.requestLongCaptureTerminal = vi.fn().mockResolvedValue({
+    sessionId: progress.sessionId,
+    action: 'cancel',
+    status: 'accepted',
+  });
+  return desktop;
 }
 
 const baseProgress: LongCaptureProgress = {

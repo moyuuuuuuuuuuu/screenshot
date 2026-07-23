@@ -20,9 +20,30 @@ export function ScrollCapturePreview({ bridge, side }: Props) {
   const [terminatingSessionId, setTerminatingSessionId] = useState<number | null>(null);
   useEffect(() => {
     let disposed = false;
-    const refresh = () => void bridge.getLongCaptureProgress()
-      .then((value) => { if (!disposed) setProgress(value); })
-      .catch(() => undefined);
+    let nextRequestSequence = 0;
+    let latestAppliedSequence = 0;
+    const refresh = () => {
+      const requestSequence = ++nextRequestSequence;
+      void bridge.getLongCaptureProgress()
+        .then((value) => {
+          if (disposed || requestSequence < latestAppliedSequence) return;
+          latestAppliedSequence = requestSequence;
+          setProgress((current) => {
+            if (
+              current
+              && (
+                value.sessionId < current.sessionId
+                || (
+                  value.sessionId === current.sessionId
+                  && value.revision < current.revision
+                )
+              )
+            ) return current;
+            return value;
+          });
+        })
+        .catch(() => undefined);
+    };
     refresh();
     const timer = window.setInterval(refresh, 120);
     return () => { disposed = true; window.clearInterval(timer); };
