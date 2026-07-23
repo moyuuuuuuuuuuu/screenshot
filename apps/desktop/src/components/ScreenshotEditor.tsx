@@ -122,8 +122,8 @@ export function ScreenshotEditor({
   const annotationSequence = useRef(0);
   const generatedSourceUrl = useRef<string | null>(null);
   const longCaptureSource = useRef<Blob | null>(null);
-  const longCaptureCancelled = useRef(false);
-  const longCaptureCancelInFlight = useRef(false);
+  const longCaptureSessionId = useRef(0);
+  const longCaptureGeneration = useRef(0);
   const cloudSource = useRef<Blob | null>(null);
   const privacyAcknowledged = useRef<boolean | null>(null);
   const mounted = useRef(true);
@@ -332,9 +332,18 @@ export function ScreenshotEditor({
   }, [bridge, exportSelection]);
 
   const startLongCapture = useCallback(async () => {
-    if (!selection || longCaptureProgress) return;
-    longCaptureCancelled.current = false;
-    longCaptureCancelInFlight.current = false;
+    if (!selection || longCaptureProgress || longCaptureSessionId.current > 0) return;
+    const captureGeneration = ++longCaptureGeneration.current;
+    let lifecycleSettled = false;
+    const settleLifecycle = () => {
+      if (lifecycleSettled) return true;
+      if (longCaptureGeneration.current !== captureGeneration) return false;
+      longCaptureGeneration.current += 1;
+      longCaptureSessionId.current = 0;
+      lifecycleSettled = true;
+      return true;
+    };
+    longCaptureSessionId.current = 0;
     dispatchCapture({ type: 'scrollStarted' });
     setError(null);
     setLongCaptureProgress({
@@ -350,11 +359,13 @@ export function ScreenshotEditor({
       slowScrollWarning: false,
     });
     try {
-      const result = await bridge.startLongCapture(selection, setLongCaptureProgress);
-      if (longCaptureCancelled.current) {
-        dispatchCapture({ type: 'scrollCancelled' });
-        return;
-      }
+      const result = await bridge.startLongCapture(selection, (progress) => {
+        if (longCaptureGeneration.current !== captureGeneration) return;
+        if (progress.sessionId > 0) longCaptureSessionId.current = progress.sessionId;
+        setLongCaptureProgress(progress);
+      });
+      if (!settleLifecycle()) return;
+      setError(null);
       if (result.action === 'save') {
         const savedPath = await bridge.savePng(result.png, screenshotName());
         if (savedPath) await bridge.closeOverlay();
@@ -384,13 +395,14 @@ export function ScreenshotEditor({
         setError('长截图已停止，已保留部分结果');
       }
     } catch (captureError) {
+      if (!settleLifecycle()) return;
       dispatchCapture({ type: 'scrollCancelled' });
       const message = errorMessage(captureError);
       if (message.toLowerCase() === 'long capture cancelled') return;
       console.error('Long capture failed', captureError);
       setError(`长截图失败：${message}`);
     } finally {
-      setLongCaptureProgress(null);
+      if (lifecycleSettled) setLongCaptureProgress(null);
     }
   }, [bridge, longCaptureProgress, selection]);
 
@@ -426,18 +438,6 @@ export function ScreenshotEditor({
       generatedSourceUrl.current = null;
     }
   }, []);
-
-  const cancelLongCaptureAndClose = useCallback(async () => {
-    if (longCaptureCancelInFlight.current) return;
-    longCaptureCancelInFlight.current = true;
-    longCaptureCancelled.current = true;
-    resetEditorSession();
-    try {
-      await bridge.cancelLongCapture();
-    } finally {
-      await bridge.closeOverlay();
-    }
-  }, [bridge, resetEditorSession]);
 
   const performRecognition = useCallback(async (
     mode: 'ocr' | 'translate',
@@ -657,10 +657,21 @@ export function ScreenshotEditor({
           closeRecognitionPanel();
         } else if (cloudPreparing) {
           cancelCloudPreparation();
-        } else if (longCaptureProgress || longCaptureCancelInFlight.current) {
-          void cancelLongCaptureAndClose();
         } else {
-          void bridge.closeOverlay();
+          const captureGeneration = longCaptureGeneration.current;
+          const sessionId = longCaptureSessionId.current;
+          if (sessionId > 0) {
+            resetEditorSession();
+            void bridge.requestLongCaptureTerminal(sessionId, 'cancel').catch((requestError) => {
+              if (
+                longCaptureGeneration.current !== captureGeneration
+                || longCaptureSessionId.current !== sessionId
+              ) return;
+              setError(`长截图退出失败：${errorMessage(requestError)}`);
+            });
+          } else if (!longCaptureProgress) {
+            void bridge.closeOverlay();
+          }
         }
         return;
       }
@@ -674,7 +685,7 @@ export function ScreenshotEditor({
         }
         return;
       }
-      if (longCaptureProgress || longCaptureCancelInFlight.current) {
+      if (longCaptureProgress) {
         event.preventDefault();
         return;
       }
@@ -694,7 +705,6 @@ export function ScreenshotEditor({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     bridge,
-    cancelLongCaptureAndClose,
     cancelCloudPreparation,
     cancelPrivacy,
     cloudPreparing,
@@ -703,6 +713,7 @@ export function ScreenshotEditor({
     longCaptureProgress,
     pendingPrivacy,
     recognitionState,
+    resetEditorSession,
     save,
   ]);
 

@@ -55,23 +55,17 @@ describe('createTauriDesktopBridge', () => {
     expect(invoke).toHaveBeenCalledWith('close_overlay');
   });
 
-  it('starts and stops a long capture with typed PNG output', async () => {
-    const invoke = vi.fn()
-      .mockResolvedValueOnce({
-        pngBytes: [1, 2, 3], partial: true, action: 'edit', clipboardError: 'clipboard busy',
-      })
-      .mockResolvedValueOnce(undefined);
+  it('starts a long capture with typed PNG output', async () => {
+    const invoke = vi.fn().mockResolvedValueOnce({
+      pngBytes: [1, 2, 3], partial: true, action: 'edit', clipboardError: 'clipboard busy',
+    });
     const bridge = createTauriDesktopBridge(invoke);
     const progress = vi.fn();
     const region = { x: 10, y: 20, width: 300, height: 400 };
 
     const result = await bridge.startLongCapture(region, progress);
-    await bridge.stopLongCapture();
-    await bridge.cancelLongCapture();
 
-    expect(invoke).toHaveBeenNthCalledWith(1, 'start_long_capture', { region });
-    expect(invoke).toHaveBeenNthCalledWith(2, 'stop_long_capture');
-    expect(invoke).toHaveBeenNthCalledWith(3, 'cancel_long_capture');
+    expect(invoke).toHaveBeenCalledWith('start_long_capture', { region });
     expect(result.partial).toBe(true);
     expect(result.clipboardError).toBe('clipboard busy');
     expect(result.png).toMatchObject({ size: 3, type: 'image/png' });

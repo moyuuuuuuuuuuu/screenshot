@@ -6,6 +6,7 @@ import type {
   DesktopBridge,
   LongCaptureProgress,
   LongCaptureResult,
+  LongCaptureTerminalOutcome,
 } from '../bridge/desktop-bridge';
 import {
   CloudClientError,
@@ -32,11 +33,6 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
       partial: false,
       action: 'edit',
     }),
-    stopLongCapture: vi.fn().mockResolvedValue(undefined),
-    editLongCapture: vi.fn().mockResolvedValue(undefined),
-    saveLongCapture: vi.fn().mockResolvedValue(undefined),
-    finishLongCapture: vi.fn().mockResolvedValue(undefined),
-    cancelLongCapture: vi.fn().mockResolvedValue(undefined),
     requestLongCaptureTerminal: vi.fn().mockResolvedValue({
       sessionId: 1,
       action: 'finish',
@@ -526,7 +522,7 @@ describe('ScreenshotEditor', () => {
     await userEvent.keyboard('{Escape}');
 
     expect(bridge.startLongCapture).not.toHaveBeenCalled();
-    expect(bridge.cancelLongCapture).not.toHaveBeenCalled();
+    expect(bridge.requestLongCaptureTerminal).not.toHaveBeenCalled();
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
       .not.toBeInTheDocument();
@@ -891,27 +887,144 @@ describe('ScreenshotEditor', () => {
     await waitFor(() => expect(bridge.closeOverlay).toHaveBeenCalledOnce());
   });
 
-  it('Esc cancels long capture and exits the overlay', async () => {
+  it('Esc delegates long-capture cancellation to the active native session', async () => {
     let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
-    let finishCapture: ((result: { png: Blob; partial: boolean; action: 'edit' }) => void) | undefined;
-    const createObjectUrl = vi.fn().mockReturnValue('blob:long-capture');
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
     const bridge = createBridge({
       startLongCapture: vi.fn((_region, onProgress) => {
         reportProgress = onProgress;
-        return new Promise<{ png: Blob; partial: boolean; action: 'edit' }>((resolve) => { finishCapture = resolve; });
+        return new Promise<LongCaptureResult>(() => undefined);
+      }),
+      requestLongCaptureTerminal: vi.fn().mockResolvedValue({
+        sessionId: 17,
+        action: 'cancel',
+        status: 'accepted',
       }),
     });
-    const { container } = render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
     const selectionSurface = screen.getByTestId('selection-surface');
     fireEvent.pointerDown(selectionSurface, { clientX: 10, clientY: 10, pointerId: 1 });
     fireEvent.pointerMove(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
     fireEvent.pointerUp(selectionSurface, { clientX: 110, clientY: 90, pointerId: 1 });
     await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
 
+    act(() => {
+      reportProgress?.({
+        sessionId: 17,
+        revision: 3,
+        frameCount: 3,
+        stitchedHeight: 1240,
+        state: 'matching',
+        previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
+        warning: false,
+        slowScrollWarning: false,
+      });
+    });
+    expect(screen.queryByRole('status', { name: '长截图进度' })).not.toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+
+    expect(bridge.requestLongCaptureTerminal).toHaveBeenCalledWith(17, 'cancel');
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'selecting');
+    expect(screen.queryByTestId('selection-box')).not.toBeInTheDocument();
+  });
+
+  it('keeps repeated Escape presses on the native cancel path until capture settles', async () => {
+    let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
+    const bridge = createBridge({
+      startLongCapture: vi.fn((_region, onProgress) => {
+        reportProgress = onProgress;
+        return new Promise<LongCaptureResult>(() => undefined);
+      }),
+      requestLongCaptureTerminal: vi.fn().mockResolvedValue({
+        sessionId: 17,
+        action: 'cancel',
+        status: 'alreadyTerminating',
+      }),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    selectRegion({ x: 10, y: 10 }, { x: 110, y: 90 });
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+    act(() => {
+      reportProgress?.({
+        sessionId: 17,
+        revision: 3,
+        frameCount: 3,
+        stitchedHeight: 1240,
+        state: 'matching',
+        previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
+        warning: false,
+        slowScrollWarning: false,
+      });
+    });
+
+    await userEvent.keyboard('{Escape}{Escape}');
+
+    expect(bridge.requestLongCaptureTerminal).toHaveBeenCalledTimes(2);
+    expect(bridge.requestLongCaptureTerminal).toHaveBeenNthCalledWith(1, 17, 'cancel');
+    expect(bridge.requestLongCaptureTerminal).toHaveBeenNthCalledWith(2, 17, 'cancel');
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('shows a retryable error when native long-capture cancellation rejects', async () => {
+    let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
+    const bridge = createBridge({
+      startLongCapture: vi.fn((_region, onProgress) => {
+        reportProgress = onProgress;
+        return new Promise<LongCaptureResult>(() => undefined);
+      }),
+      requestLongCaptureTerminal: vi.fn().mockRejectedValue(new Error('invoke failed')),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    selectRegion({ x: 10, y: 10 }, { x: 110, y: 90 });
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+    act(() => {
+      reportProgress?.({
+        sessionId: 17,
+        revision: 3,
+        frameCount: 3,
+        stitchedHeight: 1240,
+        state: 'matching',
+        previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
+        warning: false,
+        slowScrollWarning: false,
+      });
+    });
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '长截图退出失败：invoke failed',
+    );
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('lets the native result win when Esc reaches an already-terminating save', async () => {
+    let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
+    let finishCapture: ((result: LongCaptureResult) => void) | undefined;
+    const resultPng = new Blob(['native-save'], { type: 'image/png' });
+    const bridge = createBridge({
+      startLongCapture: vi.fn((_region, onProgress) => {
+        reportProgress = onProgress;
+        return new Promise<LongCaptureResult>((resolve) => { finishCapture = resolve; });
+      }),
+      requestLongCaptureTerminal: vi.fn().mockResolvedValue({
+        sessionId: 17,
+        action: 'save',
+        status: 'alreadyTerminating',
+      }),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    selectRegion({ x: 10, y: 10 }, { x: 110, y: 90 });
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
     reportProgress?.({
-      sessionId: 1,
-      revision: 2,
+      sessionId: 17,
+      revision: 3,
       frameCount: 3,
       stitchedHeight: 1240,
       state: 'matching',
@@ -921,17 +1034,129 @@ describe('ScreenshotEditor', () => {
       warning: false,
       slowScrollWarning: false,
     });
-    expect(screen.queryByRole('status', { name: '长截图进度' })).not.toBeInTheDocument();
-    await userEvent.keyboard('{Escape}{Escape}');
 
-    expect(bridge.cancelLongCapture).toHaveBeenCalledOnce();
-    expect(bridge.stopLongCapture).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Escape}');
+    finishCapture?.({ png: resultPng, partial: false, action: 'save' });
+
+    await waitFor(() => expect(bridge.savePng).toHaveBeenCalledWith(
+      resultPng,
+      expect.stringMatching(/\.png$/),
+    ));
     expect(bridge.closeOverlay).toHaveBeenCalledOnce();
-    expect(screen.getByLabelText('截图编辑器')).toHaveAttribute('data-capture-mode', 'selecting');
-    expect(screen.queryByTestId('selection-box')).not.toBeInTheDocument();
-    finishCapture?.({ png: new Blob(['discarded']), partial: true, action: 'edit' });
-    await waitFor(() => expect(createObjectUrl).not.toHaveBeenCalled());
-    expect(container.querySelector('img[src="blob:long-capture"]')).not.toBeInTheDocument();
+  });
+
+  it('ignores a progress poll that resolves after native capture completion', async () => {
+    let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
+    let finishCapture: ((result: LongCaptureResult) => void) | undefined;
+    const createObjectUrl = vi.fn().mockReturnValue('blob:completed-capture');
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectUrl,
+    });
+    const bridge = createBridge({
+      startLongCapture: vi.fn((_region, onProgress) => {
+        reportProgress = onProgress;
+        return new Promise<LongCaptureResult>((resolve) => { finishCapture = resolve; });
+      }),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    selectRegion({ x: 10, y: 10 }, { x: 110, y: 90 });
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+    act(() => {
+      reportProgress?.({
+        sessionId: 17,
+        revision: 3,
+        frameCount: 3,
+        stitchedHeight: 1240,
+        state: 'matching',
+        previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
+        warning: false,
+        slowScrollWarning: false,
+      });
+      finishCapture?.({
+        png: new Blob(['completed'], { type: 'image/png' }),
+        partial: false,
+        action: 'edit',
+      });
+    });
+    await waitFor(() => expect(createObjectUrl).toHaveBeenCalledOnce());
+
+    act(() => {
+      reportProgress?.({
+        sessionId: 17,
+        revision: 4,
+        frameCount: 4,
+        stitchedHeight: 1500,
+        state: 'observing',
+        previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
+        warning: false,
+        slowScrollWarning: false,
+      });
+    });
+    await userEvent.keyboard('{Escape}');
+
+    expect(bridge.requestLongCaptureTerminal).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a cancel rejection delivered after an authoritative native result', async () => {
+    let reportProgress: ((progress: LongCaptureProgress) => void) | undefined;
+    let finishCapture: ((result: LongCaptureResult) => void) | undefined;
+    let rejectTerminal: ((reason: unknown) => void) | undefined;
+    const createObjectUrl = vi.fn().mockReturnValue('blob:authoritative-edit');
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectUrl,
+    });
+    const bridge = createBridge({
+      startLongCapture: vi.fn((_region, onProgress) => {
+        reportProgress = onProgress;
+        return new Promise<LongCaptureResult>((resolve) => { finishCapture = resolve; });
+      }),
+      requestLongCaptureTerminal: vi.fn(() => new Promise<LongCaptureTerminalOutcome>(
+        (_resolve, reject) => {
+          rejectTerminal = reject;
+        },
+      )),
+    });
+    render(<ScreenshotEditor sourceUrl="" bridge={bridge} />);
+    selectRegion({ x: 10, y: 10 }, { x: 110, y: 90 });
+    await userEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+    act(() => {
+      reportProgress?.({
+        sessionId: 17,
+        revision: 3,
+        frameCount: 3,
+        stitchedHeight: 1240,
+        state: 'matching',
+        previewPngBytes: [],
+        navigatorPngBytes: [],
+        acceptedBounds: null,
+        warning: false,
+        slowScrollWarning: false,
+      });
+    });
+    await userEvent.keyboard('{Escape}');
+    act(() => {
+      finishCapture?.({
+        png: new Blob(['authoritative'], { type: 'image/png' }),
+        partial: false,
+        action: 'edit',
+      });
+    });
+    await waitFor(() => expect(createObjectUrl).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      rejectTerminal?.(new Error('late invoke failure'));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('长截图退出失败：late invoke failure'))
+      .not.toBeInTheDocument();
   });
 
   it('shows the native long-capture failure reason', async () => {

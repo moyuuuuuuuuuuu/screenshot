@@ -1,25 +1,30 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { DesktopBridge } from '../bridge/desktop-bridge';
 import { ScrollCapturePreview } from './ScrollCapturePreview';
 
+const progressFixture = {
+  sessionId: 17,
+  revision: 3,
+  frameCount: 7,
+  stitchedHeight: 2400,
+  state: 'observing',
+  previewPngBytes: [137, 80, 78, 71],
+  navigatorPngBytes: [137, 80, 78, 71],
+  acceptedBounds: { x: 0, y: 0, width: 420, height: 2400 },
+  warning: false,
+  slowScrollWarning: false,
+} as const;
+
 function bridge(): DesktopBridge {
   return {
-    getLongCaptureProgress: vi.fn().mockResolvedValue({
-      sessionId: 1,
-      revision: 2,
-      frameCount: 7,
-      stitchedHeight: 2400,
-      state: 'observing',
-      previewPngBytes: [137, 80, 78, 71],
-      navigatorPngBytes: [137, 80, 78, 71],
-      acceptedBounds: { x: 0, y: 0, width: 420, height: 2400 },
-      warning: false,
-      slowScrollWarning: false,
+    getLongCaptureProgress: vi.fn().mockResolvedValue(progressFixture),
+    requestLongCaptureTerminal: vi.fn().mockResolvedValue({
+      sessionId: 17,
+      action: 'finish',
+      status: 'accepted',
     }),
-    editLongCapture: vi.fn(), saveLongCapture: vi.fn(), cancelLongCapture: vi.fn(),
-    finishLongCapture: vi.fn(),
   } as unknown as DesktopBridge;
 }
 
@@ -46,15 +51,96 @@ describe('ScrollCapturePreview', () => {
 
   });
 
-  it('submits only the first terminal action', async () => {
+  it('submits the current session and hides after an accepted terminal action', async () => {
     const desktop = bridge();
+    desktop.requestLongCaptureTerminal = vi.fn().mockResolvedValue({
+      sessionId: 17,
+      action: 'finish',
+      status: 'accepted',
+    });
+    const { container } = render(<ScrollCapturePreview bridge={desktop} side="right" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '完成长截图' }));
+
+    expect(desktop.requestLongCaptureTerminal).toHaveBeenCalledWith(17, 'finish');
+    expect(container.querySelector('.scroll-sidecar'))
+      .toHaveAttribute('data-terminating', 'true');
+  });
+
+  it('keeps terminating feedback when native already accepted another terminal action', async () => {
+    const desktop = bridge();
+    desktop.requestLongCaptureTerminal = vi.fn().mockResolvedValue({
+      sessionId: 17,
+      action: 'save',
+      status: 'alreadyTerminating',
+    });
+    const { container } = render(<ScrollCapturePreview bridge={desktop} side="right" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '取消长截图' }));
+
+    expect(desktop.requestLongCaptureTerminal).toHaveBeenCalledWith(17, 'cancel');
+    expect(container.querySelector('.scroll-sidecar'))
+      .toHaveAttribute('data-terminating', 'true');
+  });
+
+  it.each([
+    ['a stale session', { sessionId: 17, action: 'cancel', status: 'stale' } as const],
+    ['an invoke rejection', new Error('invoke failed')],
+  ])('restores all actions after %s', async (_reason, outcome) => {
+    const desktop = bridge();
+    desktop.requestLongCaptureTerminal = outcome instanceof Error
+      ? vi.fn().mockRejectedValue(outcome)
+      : vi.fn().mockResolvedValue(outcome);
     render(<ScrollCapturePreview bridge={desktop} side="right" />);
 
-    await userEvent.click(screen.getByRole('button', { name: '完成长截图' }));
-    await userEvent.click(screen.getByRole('button', { name: '取消长截图' }));
+    await userEvent.click(await screen.findByRole('button', { name: '取消长截图' }));
 
-    expect(desktop.finishLongCapture).toHaveBeenCalledOnce();
-    expect(desktop.cancelLongCapture).not.toHaveBeenCalled();
-    for (const button of screen.getAllByRole('button')) expect(button).toBeDisabled();
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).toBeEnabled();
+    }
+  });
+
+  it('does not send a terminal action before progress identifies the session', async () => {
+    const desktop = bridge();
+    desktop.getLongCaptureProgress = vi.fn().mockResolvedValue({
+      ...progressFixture,
+      sessionId: 0,
+    });
+    render(<ScrollCapturePreview bridge={desktop} side="right" />);
+
+    await screen.findByRole('toolbar', { name: '长截图操作' });
+
+    expect(screen.getAllByRole('button').every((button) => button.hasAttribute('disabled')))
+      .toBe(true);
+    expect(desktop.requestLongCaptureTerminal).not.toHaveBeenCalled();
+  });
+
+  it('enables actions when the reused sidecar observes a new session', async () => {
+    const desktop = bridge();
+    desktop.getLongCaptureProgress = vi.fn()
+      .mockResolvedValueOnce(progressFixture)
+      .mockResolvedValue({
+        ...progressFixture,
+        sessionId: 18,
+        revision: 1,
+      });
+    desktop.requestLongCaptureTerminal = vi.fn().mockResolvedValue({
+      sessionId: 17,
+      action: 'finish',
+      status: 'accepted',
+    });
+    const { container } = render(<ScrollCapturePreview bridge={desktop} side="right" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '完成长截图' }));
+    expect(container.querySelector('.scroll-sidecar'))
+      .toHaveAttribute('data-terminating', 'true');
+
+    await waitFor(() => {
+      for (const button of screen.getAllByRole('button')) {
+        expect(button).toBeEnabled();
+      }
+    });
+    expect(container.querySelector('.scroll-sidecar'))
+      .toHaveAttribute('data-terminating', 'false');
   });
 });

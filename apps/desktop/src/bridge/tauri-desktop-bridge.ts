@@ -151,15 +151,6 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
           : {}),
       } satisfies LongCaptureResult;
     },
-    async stopLongCapture() {
-      await invoke('stop_long_capture');
-    },
-    async editLongCapture() { await invoke('edit_long_capture'); },
-    async saveLongCapture() { await invoke('save_long_capture'); },
-    async finishLongCapture() { await invoke('finish_long_capture'); },
-    async cancelLongCapture() {
-      await invoke('cancel_long_capture');
-    },
     async requestLongCaptureTerminal(sessionId, action) {
       if (
         !Number.isSafeInteger(sessionId)

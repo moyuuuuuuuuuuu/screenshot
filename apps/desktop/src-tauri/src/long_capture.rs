@@ -1155,31 +1155,6 @@ pub async fn start_long_capture(
     result
 }
 
-#[tauri::command]
-pub fn stop_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.request_finish();
-}
-
-#[tauri::command]
-pub fn edit_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.request_edit();
-}
-
-#[tauri::command]
-pub fn save_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.request_save();
-}
-
-#[tauri::command]
-pub fn finish_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.request_finish();
-}
-
-#[tauri::command]
-pub fn cancel_long_capture(runtime: tauri::State<'_, LongCaptureRuntime>) {
-    runtime.request_cancel();
-}
-
 fn request_long_capture_terminal_inner(
     runtime: &LongCaptureRuntime,
     session_id: u64,

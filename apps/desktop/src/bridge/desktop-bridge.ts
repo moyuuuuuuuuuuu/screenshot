@@ -44,11 +44,6 @@ export interface DesktopBridge {
     region: Rect,
     onProgress: (progress: LongCaptureProgress) => void,
   ): Promise<LongCaptureResult>;
-  stopLongCapture(): Promise<void>;
-  editLongCapture(): Promise<void>;
-  saveLongCapture(): Promise<void>;
-  finishLongCapture(): Promise<void>;
-  cancelLongCapture(): Promise<void>;
   requestLongCaptureTerminal(
     sessionId: number,
     action: LongCaptureTerminalAction,

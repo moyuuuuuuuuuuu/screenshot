@@ -33,11 +33,6 @@ export function createBrowserDesktopBridge(
     async startLongCapture() {
       throw new Error('Long capture requires the desktop application');
     },
-    async stopLongCapture() {},
-    async editLongCapture() {},
-    async saveLongCapture() {},
-    async finishLongCapture() {},
-    async cancelLongCapture() {},
     async requestLongCaptureTerminal(sessionId, action) {
       return { sessionId, action, status: 'accepted' };
     },

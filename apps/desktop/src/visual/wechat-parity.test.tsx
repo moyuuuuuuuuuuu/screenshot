@@ -8,10 +8,11 @@ import { WECHAT_REFERENCE_METRICS } from './wechat-reference-metrics';
 function previewBridge(progress: LongCaptureProgress): DesktopBridge {
   return {
     getLongCaptureProgress: vi.fn().mockResolvedValue(progress),
-    editLongCapture: vi.fn(),
-    saveLongCapture: vi.fn(),
-    cancelLongCapture: vi.fn(),
-    finishLongCapture: vi.fn(),
+    requestLongCaptureTerminal: vi.fn().mockResolvedValue({
+      sessionId: progress.sessionId,
+      action: 'cancel',
+      status: 'accepted',
+    }),
   } as unknown as DesktopBridge;
 }
 
