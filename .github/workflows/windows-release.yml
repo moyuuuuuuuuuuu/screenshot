@@ -1,0 +1,240 @@
+name: Windows release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unsigned:
+    name: Unsigned debug MSI and NSIS
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.13.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned debug installers
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: --debug --bundles msi,nsis --no-sign
+
+      - name: Upload unsigned debug installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-unsigned-debug
+          path: |
+            apps/desktop/src-tauri/target/debug/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/debug/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  signing-secrets:
+    name: Check signing availability
+    runs-on: windows-latest
+    permissions: {}
+    outputs:
+      available: ${{ steps.detect.outputs.available }}
+
+    steps:
+      - name: Detect complete signing configuration
+        id: detect
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $available = -not (
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE) -or
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD) -or
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)
+          )
+          "available=$($available.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          if (-not $available) {
+            Write-Host "::notice::Signing secrets are incomplete; the unsigned debug artifacts remain available."
+          }
+
+  signed:
+    name: Signed release MSI and NSIS
+    needs:
+      - signing-secrets
+    if: needs.signing-secrets.outputs.available == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.13.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Import signing certificate and generate runtime config
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $encodedPath = Join-Path $env:RUNNER_TEMP "windows-certificate.base64"
+          $pfxPath = Join-Path $env:RUNNER_TEMP "windows-certificate.pfx"
+          $thumbprintsPath = Join-Path $env:RUNNER_TEMP "imported-certificate-thumbprints.txt"
+          $configPath = Join-Path $env:RUNNER_TEMP "tauri-signing.conf.json"
+          $expectedThumbprint = ($env:WINDOWS_CERTIFICATE_THUMBPRINT -replace "\s", "").ToUpperInvariant()
+
+          Set-Content -Path $encodedPath -Value $env:WINDOWS_CERTIFICATE -NoNewline
+          certutil -decode $encodedPath $pfxPath | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to decode WINDOWS_CERTIFICATE."
+          }
+          Remove-Item $encodedPath -Force
+
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $imported = @(
+            Import-PfxCertificate `
+              -FilePath $pfxPath `
+              -CertStoreLocation Cert:\CurrentUser\My `
+              -Password $password
+          )
+          $imported |
+            ForEach-Object { $_.Thumbprint } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Set-Content -Path $thumbprintsPath
+
+          $signingCertificate = $imported |
+            Where-Object {
+              $_.HasPrivateKey -and
+              $_.Thumbprint.ToUpperInvariant() -eq $expectedThumbprint
+            } |
+            Select-Object -First 1
+          if ($null -eq $signingCertificate) {
+            throw "Imported certificate does not match WINDOWS_CERTIFICATE_THUMBPRINT."
+          }
+
+          @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $expectedThumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+                tsp = $true
+              }
+            }
+          } |
+            ConvertTo-Json -Depth 4 |
+            Set-Content -Path $configPath -Encoding utf8NoBOM
+
+      - name: Build signed release installers
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: --bundles msi,nsis --config "${{ runner.temp }}/tauri-signing.conf.json"
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $expectedThumbprint = ($env:WINDOWS_CERTIFICATE_THUMBPRINT -replace "\s", "").ToUpperInvariant()
+          $installers = @(
+            Get-ChildItem apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          )
+          if ($installers.Count -ne 2) {
+            throw "Expected one MSI and one NSIS installer, found $($installers.Count)."
+          }
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature $installer.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature on $($installer.Name): $($signature.Status)"
+            }
+            if ($signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $expectedThumbprint) {
+              throw "Unexpected signing certificate on $($installer.Name)."
+            }
+          }
+
+      - name: Upload signed release installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-signed-release
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove signing material
+        if: always()
+        shell: pwsh
+        run: |
+          $thumbprintsPath = Join-Path $env:RUNNER_TEMP "imported-certificate-thumbprints.txt"
+          if (Test-Path $thumbprintsPath) {
+            Get-Content $thumbprintsPath |
+              ForEach-Object {
+                $certificatePath = "Cert:\CurrentUser\My\$($_)"
+                if (Test-Path $certificatePath) {
+                  Remove-Item $certificatePath -Force
+                }
+              }
+          }
+          @(
+            (Join-Path $env:RUNNER_TEMP "windows-certificate.base64"),
+            (Join-Path $env:RUNNER_TEMP "windows-certificate.pfx"),
+            $thumbprintsPath,
+            (Join-Path $env:RUNNER_TEMP "tauri-signing.conf.json")
+          ) |
+            Where-Object { Test-Path $_ } |
+            Remove-Item -Force
