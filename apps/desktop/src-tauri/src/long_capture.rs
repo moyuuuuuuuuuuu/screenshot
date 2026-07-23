@@ -56,6 +56,16 @@ pub struct LongCaptureProgress {
     slow_scroll_warning: bool,
 }
 
+struct LongCaptureUpdate {
+    revision: u64,
+    frame_count: u32,
+    stitched_height: u32,
+    state: &'static str,
+    preview_png_bytes: Vec<u8>,
+    warning: bool,
+    width: u32,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 struct LongCaptureDiagnostic {
@@ -336,7 +346,18 @@ impl LongCaptureRuntime {
         self.cancel_requested.store(false, Ordering::Release);
         self.action
             .store(LongCaptureAction::None.code(), Ordering::Release);
-        self.update(session_id, 0, 0, 0, "preparing", Vec::new(), false, 0);
+        self.update(
+            session_id,
+            LongCaptureUpdate {
+                revision: 0,
+                frame_count: 0,
+                stitched_height: 0,
+                state: "preparing",
+                preview_png_bytes: Vec::new(),
+                warning: false,
+                width: 0,
+            },
+        );
         Ok(session_id)
     }
 
@@ -354,34 +375,24 @@ impl LongCaptureRuntime {
         self.active_session_id.load(Ordering::Acquire)
     }
 
-    fn update(
-        &self,
-        session_id: u64,
-        revision: u64,
-        frame_count: u32,
-        stitched_height: u32,
-        state: &'static str,
-        preview_png_bytes: Vec<u8>,
-        warning: bool,
-        width: u32,
-    ) {
+    fn update(&self, session_id: u64, update: LongCaptureUpdate) {
         if let Ok(mut progress) = self.progress.lock() {
             *progress = LongCaptureProgress {
                 session_id,
-                revision,
-                frame_count,
-                stitched_height,
-                state,
-                navigator_png_bytes: preview_png_bytes.clone(),
-                accepted_bounds: (width > 0).then_some(AcceptedBounds {
+                revision: update.revision,
+                frame_count: update.frame_count,
+                stitched_height: update.stitched_height,
+                state: update.state,
+                navigator_png_bytes: update.preview_png_bytes.clone(),
+                accepted_bounds: (update.width > 0).then_some(AcceptedBounds {
                     x: 0,
                     y: 0,
-                    width,
-                    height: stitched_height,
+                    width: update.width,
+                    height: update.stitched_height,
                 }),
-                preview_png_bytes,
-                warning,
-                slow_scroll_warning: warning,
+                preview_png_bytes: update.preview_png_bytes,
+                warning: update.warning,
+                slow_scroll_warning: update.warning,
             };
         }
     }
@@ -575,13 +586,15 @@ fn publish_progress(
     );
     runtime.update(
         session_id,
-        revision,
-        session.frame_count(),
-        session.stitched_height(),
-        session_state_name(session.state()),
-        preview.to_vec(),
-        warning,
-        width,
+        LongCaptureUpdate {
+            revision,
+            frame_count: session.frame_count(),
+            stitched_height: session.stitched_height(),
+            state: session_state_name(session.state()),
+            preview_png_bytes: preview.to_vec(),
+            warning,
+            width,
+        },
     );
 }
 
@@ -1318,11 +1331,44 @@ mod tests {
     fn progress_revision_changes_only_after_an_accepted_append() {
         let runtime = super::LongCaptureRuntime::default();
         let session_id = runtime.begin().unwrap();
-        runtime.update(session_id, 0, 1, 800, "observing", vec![1], false, 400);
+        runtime.update(
+            session_id,
+            super::LongCaptureUpdate {
+                revision: 0,
+                frame_count: 1,
+                stitched_height: 800,
+                state: "observing",
+                preview_png_bytes: vec![1],
+                warning: false,
+                width: 400,
+            },
+        );
         let first = runtime.progress.lock().unwrap().clone();
-        runtime.update(session_id, 0, 1, 800, "scrolling", vec![1], false, 400);
+        runtime.update(
+            session_id,
+            super::LongCaptureUpdate {
+                revision: 0,
+                frame_count: 1,
+                stitched_height: 800,
+                state: "scrolling",
+                preview_png_bytes: vec![1],
+                warning: false,
+                width: 400,
+            },
+        );
         let moving = runtime.progress.lock().unwrap().clone();
-        runtime.update(session_id, 1, 2, 1_200, "observing", vec![2], false, 400);
+        runtime.update(
+            session_id,
+            super::LongCaptureUpdate {
+                revision: 1,
+                frame_count: 2,
+                stitched_height: 1_200,
+                state: "observing",
+                preview_png_bytes: vec![2],
+                warning: false,
+                width: 400,
+            },
+        );
         let appended = runtime.progress.lock().unwrap().clone();
 
         assert_eq!(first.revision, moving.revision);
