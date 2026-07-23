@@ -423,11 +423,11 @@ COZE_WORKFLOW_ID=
 }
 ```
 
-- [ ] Test file upload, `POST /v1/workflow/run`, 20-second timeout, invalid JSON, missing fields, unsupported language, and token redaction.
-- [ ] Implement file upload followed by the published workflow call; normalize snake_case Coze output into `RecognitionResult`.
-- [ ] Refuse production startup when provider is `coze` and any required variable is empty.
-- [ ] Document exact Coze start-node inputs, output-node JSON, publishing, token creation, and a curl smoke test.
-- [ ] Commit with `git commit -m "feat: integrate Coze OCR translation workflow"`.
+- [x] Test file upload, `POST /v1/workflow/run`, 20-second timeout, invalid JSON, missing fields, unsupported language, and token redaction.
+- [x] Implement file upload followed by the published workflow call; normalize snake_case Coze output into `RecognitionResult`.
+- [x] Refuse production startup when provider is `coze` and any required variable is empty.
+- [x] Document exact Coze start-node inputs, output-node JSON, publishing, token creation, and a curl smoke test.
+- [x] Commit with `git commit -m "feat: integrate Coze OCR translation workflow"`.
 
 ### Task D4: Desktop Cloud Client and Result Panel
 
@@ -563,3 +563,11 @@ Use this prompt on the next device:
 - Verified: cloud tests 48/48, workspace tests 154/154, root typecheck, task-level security review.
 - Blockers: production multi-instance deployment still requires a Redis-backed quota/rate/replay store and trusted-proxy configuration; no Coze token/workflow is available for live validation.
 - Next action: Task D3, implement the Coze provider contract, environment validation, workflow setup guide, and mocked HTTP tests.
+
+### 2026-07-23 11:12 — Coze provider contract
+
+- Branch: `main`
+- HEAD: `cf486ce fix: complete Coze provider runtime contract`
+- Verified: focused Coze/runtime/server tests 80/80, workspace tests 194/194, root typecheck, cloud build, task-level review.
+- Blockers: live Coze smoke test still requires a server-side PAT and a published workflow ID; no credentials are stored in the repository or desktop app.
+- Next action: Task D4, replace desktop direct-Coze calls with the cloud client, result panel, retry/error states, quota view, and first-upload privacy acknowledgement.
