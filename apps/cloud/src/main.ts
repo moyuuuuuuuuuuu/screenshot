@@ -6,10 +6,12 @@ import { buildServer } from './server.js';
 const defaultHost = '127.0.0.1';
 const defaultPort = 3000;
 const startupErrorMessage = 'Cloud server failed to start.';
-const defaultAllowedOrigins = [
+const desktopAllowedOrigins = [
   'http://tauri.localhost',
   'https://tauri.localhost',
   'tauri://localhost',
+] as const;
+const developmentAllowedOrigins = [
   'http://localhost:1420',
   'http://127.0.0.1:1420',
 ] as const;
@@ -54,15 +56,23 @@ export function readCloudRuntimeConfiguration(
     serverOptions: {
       signingSecret: environment.REQUEST_SIGNING_SECRET ?? '',
       environment,
-      allowedOrigins: readAllowedOrigins(environment.CORS_ALLOWED_ORIGINS),
+      allowedOrigins: readAllowedOrigins(
+        environment.CORS_ALLOWED_ORIGINS,
+        environment.NODE_ENV,
+      ),
     },
     listenOptions: { host, port },
   };
 }
 
-function readAllowedOrigins(value: string | undefined): readonly string[] {
+function readAllowedOrigins(
+  value: string | undefined,
+  nodeEnvironment: string | undefined,
+): readonly string[] {
   if (value === undefined || value.trim().length === 0) {
-    return [...defaultAllowedOrigins];
+    return nodeEnvironment === 'production'
+      ? [...desktopAllowedOrigins]
+      : [...desktopAllowedOrigins, ...developmentAllowedOrigins];
   }
   const origins = [...new Set(
     value

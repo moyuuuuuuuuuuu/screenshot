@@ -70,6 +70,21 @@ describe('cloud runtime configuration', () => {
       ]);
   });
 
+  it('does not allow Vite development origins by default in production', () => {
+    expect(readCloudRuntimeConfiguration({
+      ...developmentEnvironment,
+      NODE_ENV: 'production',
+      CLOUD_PROVIDER: 'coze',
+      COZE_API_BASE_URL: 'https://api.coze.cn',
+      COZE_API_TOKEN: 'server-only-token',
+      COZE_WORKFLOW_ID: 'published-workflow',
+    }).serverOptions.allowedOrigins).toEqual([
+      'http://tauri.localhost',
+      'https://tauri.localhost',
+      'tauri://localhost',
+    ]);
+  });
+
   it.each(['*', 'http://tauri.localhost/path', 'not-an-origin'])(
     'rejects unsafe CORS origin %s',
     (origin) => {

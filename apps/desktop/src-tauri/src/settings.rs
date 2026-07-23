@@ -149,11 +149,28 @@ pub fn update_shortcut(
         return Err("请录制包含修饰键的快捷键".to_string());
     }
     let mut registrar = crate::hotkey::TauriShortcutRegistrar(&app);
+    update_shortcut_transaction(&state, &mut registrar, candidate, |settings| {
+        persist_settings(&app, settings)
+    })
+}
+
+fn update_shortcut_transaction(
+    state: &SettingsState,
+    registrar: &mut impl crate::hotkey::ShortcutRegistrar,
+    candidate: &str,
+    persist: impl FnOnce(&AppSettings) -> Result<(), String>,
+) -> Result<AppSettings, String> {
     state.update(|settings| {
+        let current = settings.shortcut.clone();
         let mut next = settings.clone();
-        crate::hotkey::replace_shortcut(&mut registrar, &next.shortcut, candidate)?;
+        crate::hotkey::replace_shortcut(registrar, &current, candidate)?;
         next.shortcut = candidate.to_string();
-        persist_settings(&app, &next)?;
+        if let Err(persist_error) = persist(&next) {
+            if crate::hotkey::replace_shortcut(registrar, candidate, &current).is_err() {
+                return Err("快捷键保存失败，且无法恢复原快捷键，请重启应用后重试".to_string());
+            }
+            return Err(persist_error);
+        }
         Ok(next)
     })
 }
@@ -175,6 +192,7 @@ pub fn update_cloud_privacy_acknowledgement(
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::collections::HashSet;
     use std::fs;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -319,6 +337,45 @@ mod tests {
         let final_settings = state.snapshot().expect("settings snapshot");
         assert_eq!(final_settings.shortcut, "Ctrl+Alt+X");
         assert!(final_settings.cloud_privacy_acknowledged);
+    }
+
+    struct FakeShortcutRegistrar {
+        registered: HashSet<String>,
+    }
+
+    impl crate::hotkey::ShortcutRegistrar for FakeShortcutRegistrar {
+        fn register(&mut self, shortcut: &str) -> Result<(), String> {
+            self.registered.insert(shortcut.to_string());
+            Ok(())
+        }
+
+        fn unregister(&mut self, shortcut: &str) -> Result<(), String> {
+            self.registered.remove(shortcut);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shortcut_persistence_failure_restores_the_registered_and_stored_shortcut() {
+        let state = super::SettingsState::default();
+        let mut registrar = FakeShortcutRegistrar {
+            registered: HashSet::from(["Alt+Shift+A".to_string()]),
+        };
+
+        let result =
+            super::update_shortcut_transaction(&state, &mut registrar, "Ctrl+Alt+X", |_| {
+                Err("disk write failed".to_string())
+            });
+
+        assert!(result.is_err());
+        assert_eq!(
+            state.snapshot().expect("settings snapshot").shortcut,
+            "Alt+Shift+A"
+        );
+        assert_eq!(
+            registrar.registered,
+            HashSet::from(["Alt+Shift+A".to_string()])
+        );
     }
 
     fn temporary_settings_path(label: &str) -> std::path::PathBuf {
