@@ -84,6 +84,33 @@ describe('browser desktop bridge', () => {
     expect([...values.values()].join('')).not.toContain('coze');
   });
 
+  it('updates only cloud acknowledgement while preserving the stored shortcut', async () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    };
+    const bridge = createBrowserDesktopBridge({
+      writeClipboard: vi.fn(),
+      download: vi.fn(),
+      close: vi.fn(),
+      storage,
+    });
+    await bridge.updateSettings({
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: false,
+    });
+
+    await expect(bridge.updateCloudPrivacyAcknowledgement(true)).resolves.toEqual({
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: true,
+    });
+    await expect(bridge.loadSettings()).resolves.toEqual({
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: true,
+    });
+  });
+
   it('downloads a PNG with the suggested filename', async () => {
     const downloaded: string[] = [];
     const bridge = createBrowserDesktopBridge({

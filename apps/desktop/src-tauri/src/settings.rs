@@ -1,9 +1,21 @@
-use std::{fs, path::Path, sync::Mutex};
+use std::{fmt, fs, path::Path, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 pub const DEFAULT_SHORTCUT: &str = "Alt+Shift+A";
+pub const SETTINGS_LOAD_ERROR_MESSAGE: &str = "Stored settings could not be sanitized safely.";
+
+#[derive(Debug)]
+pub struct SettingsLoadError;
+
+impl fmt::Display for SettingsLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(SETTINGS_LOAD_ERROR_MESSAGE)
+    }
+}
+
+impl std::error::Error for SettingsLoadError {}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -51,23 +63,50 @@ fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
-pub fn read_settings(app: &AppHandle) -> Result<AppSettings, String> {
-    let path = settings_path(app)?;
+pub fn read_settings(app: &AppHandle) -> Result<AppSettings, SettingsLoadError> {
+    let path = settings_path(app).map_err(|_| SettingsLoadError)?;
     read_settings_from_path(&path)
 }
 
-fn read_settings_from_path(path: &Path) -> Result<AppSettings, String> {
-    if !path.exists() {
+trait SettingsStorage {
+    fn exists(&self) -> bool;
+    fn read(&self) -> Result<String, String>;
+    fn write(&self, settings: &AppSettings) -> Result<(), String>;
+}
+
+struct FileSettingsStorage<'a>(&'a Path);
+
+impl SettingsStorage for FileSettingsStorage<'_> {
+    fn exists(&self) -> bool {
+        self.0.exists()
+    }
+
+    fn read(&self) -> Result<String, String> {
+        fs::read_to_string(self.0).map_err(|error| error.to_string())
+    }
+
+    fn write(&self, settings: &AppSettings) -> Result<(), String> {
+        persist_settings_to_path(self.0, settings)
+    }
+}
+
+fn read_settings_from_path(path: &Path) -> Result<AppSettings, SettingsLoadError> {
+    load_settings_from_storage(&FileSettingsStorage(path))
+}
+
+fn load_settings_from_storage(
+    storage: &impl SettingsStorage,
+) -> Result<AppSettings, SettingsLoadError> {
+    if !storage.exists() {
         return Ok(AppSettings::default());
     }
-    let json = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let stored: serde_json::Value =
-        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    let json = storage.read().map_err(|_| SettingsLoadError)?;
+    let stored: serde_json::Value = serde_json::from_str(&json).map_err(|_| SettingsLoadError)?;
     let settings: AppSettings =
-        serde_json::from_value(stored.clone()).map_err(|error| error.to_string())?;
-    let sanitized = serde_json::to_value(&settings).map_err(|error| error.to_string())?;
+        serde_json::from_value(stored.clone()).map_err(|_| SettingsLoadError)?;
+    let sanitized = serde_json::to_value(&settings).map_err(|_| SettingsLoadError)?;
     if stored != sanitized {
-        persist_settings_to_path(path, &settings)?;
+        storage.write(&settings).map_err(|_| SettingsLoadError)?;
     }
     Ok(settings)
 }
@@ -123,6 +162,7 @@ pub fn update_cloud_privacy_acknowledgement(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs;
 
     #[test]
@@ -181,6 +221,48 @@ mod tests {
         let reloaded = super::read_settings_from_path(&path).expect("reloaded settings");
         assert!(reloaded.cloud_privacy_acknowledged);
         let _ = fs::remove_file(path);
+    }
+
+    struct RewriteFailingStorage {
+        rewrite_attempted: Cell<bool>,
+    }
+
+    impl super::SettingsStorage for RewriteFailingStorage {
+        fn exists(&self) -> bool {
+            true
+        }
+
+        fn read(&self) -> Result<String, String> {
+            Ok(r#"{
+  "shortcut": "Ctrl+Alt+X",
+  "coze": {
+    "token": "legacy-sensitive-token",
+    "workflowId": "legacy-sensitive-workflow"
+  }
+}"#
+            .to_string())
+        }
+
+        fn write(&self, _settings: &super::AppSettings) -> Result<(), String> {
+            self.rewrite_attempted.set(true);
+            Err("write failed for legacy-sensitive-token / legacy-sensitive-workflow".to_string())
+        }
+    }
+
+    #[test]
+    fn rewrite_failure_is_fail_closed_with_a_fixed_safe_startup_error() {
+        let storage = RewriteFailingStorage {
+            rewrite_attempted: Cell::new(false),
+        };
+
+        let error = super::load_settings_from_storage(&storage)
+            .expect_err("startup must stop when legacy credentials cannot be removed");
+        let message = error.to_string();
+
+        assert!(storage.rewrite_attempted.get());
+        assert_eq!(message, super::SETTINGS_LOAD_ERROR_MESSAGE);
+        assert!(!message.contains("legacy-sensitive-token"));
+        assert!(!message.contains("legacy-sensitive-workflow"));
     }
 
     fn temporary_settings_path(label: &str) -> std::path::PathBuf {

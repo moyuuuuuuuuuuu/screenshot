@@ -144,6 +144,11 @@ export function createTauriDesktopBridge(invoke: TauriInvoke): DesktopBridge {
         acknowledged: settings.cloudPrivacyAcknowledged,
       }));
     },
+    async updateCloudPrivacyAcknowledgement(acknowledged) {
+      return parseSettings(await invoke('update_cloud_privacy_acknowledgement', {
+        acknowledged,
+      }));
+    },
     async pinPng(blob, bounds) {
       const result = await invoke('pin_png', { pngBytes: await blobBytes(blob), bounds });
       if (typeof result !== 'string') throw new Error('pin_png returned an invalid label');

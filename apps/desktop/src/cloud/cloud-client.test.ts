@@ -6,6 +6,7 @@ import {
   CloudClientError,
   createCloudClient,
   createCloudRequestSignature,
+  type CreateCloudClientOptions,
   type RecognitionResult,
 } from './cloud-client';
 
@@ -39,6 +40,36 @@ function createHarness(fetchImpl: typeof fetch) {
     subtleCrypto: webcrypto.subtle as SubtleCrypto,
     clock: () => timestamp,
   });
+}
+
+type LifecycleStage = 'identity' | 'blob-read' | 'signature';
+
+function createLifecycleStageRequest(
+  stage: LifecycleStage,
+  runStage: () => Promise<never>,
+  signal: AbortSignal,
+): Promise<RecognitionResult> {
+  const image = new Blob(['image-bytes'], { type: 'image/png' });
+  Object.defineProperty(image, 'arrayBuffer', {
+    configurable: true,
+    value: stage === 'blob-read'
+      ? runStage
+      : async () => new TextEncoder().encode('image-bytes').buffer,
+  });
+  const subtleCrypto = stage === 'signature'
+    ? ({ digest: runStage } as unknown as SubtleCrypto)
+    : webcrypto.subtle as SubtleCrypto;
+  const options: CreateCloudClientOptions = {
+    apiUrl: 'https://cloud.example.test/',
+    requestKey: 'test-secret',
+    getDeviceId: stage === 'identity'
+      ? runStage
+      : async () => deviceId,
+    fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(recognitionResult)),
+    subtleCrypto,
+    clock: () => timestamp,
+  };
+  return createCloudClient(options).recognize('ocr', image, signal);
 }
 
 describe('cloud request signing', () => {
@@ -298,6 +329,63 @@ describe('CloudClient cancellation and deadline', () => {
       }),
     );
   });
+
+  it.each<LifecycleStage>(['identity', 'blob-read', 'signature'])(
+    'caller abort covers a pending %s stage',
+    async (stage) => {
+      const controller = new AbortController();
+      const observedRejection = vi.fn();
+      void createLifecycleStageRequest(
+        stage,
+        () => new Promise<never>(() => undefined),
+        controller.signal,
+      ).catch(observedRejection);
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(observedRejection).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'ABORTED' }),
+      );
+    },
+  );
+
+  it.each<LifecycleStage>(['identity', 'blob-read', 'signature'])(
+    'the 20-second deadline covers a pending %s stage',
+    async (stage) => {
+      const observedRejection = vi.fn();
+      void createLifecycleStageRequest(
+        stage,
+        () => new Promise<never>(() => undefined),
+        new AbortController().signal,
+      ).catch(observedRejection);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(observedRejection).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'REQUEST_TIMEOUT' }),
+      );
+    },
+  );
+
+  it.each<LifecycleStage>(['identity', 'blob-read', 'signature'])(
+    'maps raw %s failures to a safe NETWORK_UNAVAILABLE error',
+    async (stage) => {
+      const rawMessage = `${stage}-private-error`;
+      const request = createLifecycleStageRequest(
+        stage,
+        () => Promise.reject(new Error(rawMessage)),
+        new AbortController().signal,
+      );
+
+      await expect(request).rejects.toEqual(expect.objectContaining({
+        code: 'NETWORK_UNAVAILABLE',
+        message: expect.not.stringContaining(rawMessage),
+      }));
+    },
+  );
 });
 
 describe('CloudClientError', () => {

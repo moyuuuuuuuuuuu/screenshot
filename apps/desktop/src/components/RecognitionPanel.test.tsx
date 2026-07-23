@@ -77,11 +77,11 @@ describe('RecognitionPanel', () => {
 
     const block = screen.getByText('第一段', { selector: '.recognition-panel__block' });
     fireEvent.mouseEnter(block);
-    fireEvent.mouseLeave(block);
     fireEvent.focus(block);
+    fireEvent.mouseLeave(block);
     fireEvent.blur(block);
     expect(onHighlight).toHaveBeenNthCalledWith(1, firstBlock);
-    expect(onHighlight).toHaveBeenNthCalledWith(2, null);
+    expect(onHighlight).toHaveBeenNthCalledWith(2, firstBlock);
     expect(onHighlight).toHaveBeenNthCalledWith(3, firstBlock);
     expect(onHighlight).toHaveBeenNthCalledWith(4, null);
 

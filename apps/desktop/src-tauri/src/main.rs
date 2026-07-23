@@ -36,9 +36,8 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            let settings = screenshot_tool::settings::read_settings(app.handle())?;
             screenshot_tool::tray::create_tray(app)?;
-            let settings = screenshot_tool::settings::read_settings(app.handle())
-                .unwrap_or_default();
             let shortcut = settings.shortcut.clone();
             let _ = app
                 .state::<screenshot_tool::settings::SettingsState>()

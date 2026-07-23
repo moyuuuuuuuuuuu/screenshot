@@ -124,12 +124,58 @@ export function createCloudClient(options: CreateCloudClientOptions): CloudClien
     body: Blob | null,
     callerSignal?: AbortSignal,
   ): Promise<unknown> {
+    const controller = new AbortController();
+    let callerAborted = callerSignal?.aborted ?? false;
+    let deadlineReached = false;
+    let rejectCancellation: ((reason: Error) => void) | undefined;
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = reject;
+    });
+    const abortFromCaller = () => {
+      callerAborted = true;
+      controller.abort();
+      rejectCancellation?.(new Error('cancelled'));
+    };
+    callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    const deadline = globalThis.setTimeout(() => {
+      deadlineReached = true;
+      controller.abort();
+      rejectCancellation?.(new Error('deadline'));
+    }, timeoutMilliseconds);
+
+    try {
+      if (callerAborted) {
+        throw clientError('ABORTED');
+      }
+      return await Promise.race([
+        executeRequest(operation, body, controller.signal),
+        cancellation,
+      ]);
+    } catch (error) {
+      if (error instanceof CloudClientError) {
+        throw error;
+      }
+      if (callerAborted || callerSignal?.aborted) {
+        throw clientError('ABORTED');
+      }
+      if (deadlineReached) {
+        throw clientError('REQUEST_TIMEOUT');
+      }
+      throw clientError('NETWORK_UNAVAILABLE');
+    } finally {
+      globalThis.clearTimeout(deadline);
+      callerSignal?.removeEventListener('abort', abortFromCaller);
+    }
+  }
+
+  async function executeRequest(
+    operation: CloudOperation,
+    body: Blob | null,
+    signal: AbortSignal,
+  ): Promise<unknown> {
     const apiUrl = options.apiUrl.trim().replace(/\/+$/, '');
     if (apiUrl.length === 0 || options.requestKey.trim().length === 0) {
       throw clientError('CONFIGURATION_MISSING');
-    }
-    if (callerSignal?.aborted) {
-      throw clientError('ABORTED');
     }
 
     const deviceId = await options.getDeviceId();
@@ -147,18 +193,6 @@ export function createCloudClient(options: CreateCloudClientOptions): CloudClien
       },
       subtleCrypto,
     );
-    if (callerSignal?.aborted) {
-      throw clientError('ABORTED');
-    }
-
-    const controller = new AbortController();
-    let deadlineReached = false;
-    const abortFromCaller = () => controller.abort();
-    callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
-    const deadline = globalThis.setTimeout(() => {
-      deadlineReached = true;
-      controller.abort();
-    }, timeoutMilliseconds);
 
     const headers: Record<string, string> = {
       'x-device-id': deviceId,
@@ -170,31 +204,14 @@ export function createCloudClient(options: CreateCloudClientOptions): CloudClien
     }
 
     const init: RequestInit = body === null
-      ? { method: 'GET', headers, signal: controller.signal }
-      : { method: 'POST', headers, body, signal: controller.signal };
-
-    try {
-      const response = await fetchImpl(`${apiUrl}/v1/${operation}`, init);
-      const payload = await parseJson(response);
-      if (!response.ok) {
-        throw parseErrorEnvelope(payload, response.status);
-      }
-      return payload;
-    } catch (error) {
-      if (error instanceof CloudClientError) {
-        throw error;
-      }
-      if (callerSignal?.aborted) {
-        throw clientError('ABORTED');
-      }
-      if (deadlineReached) {
-        throw clientError('REQUEST_TIMEOUT');
-      }
-      throw clientError('NETWORK_UNAVAILABLE');
-    } finally {
-      globalThis.clearTimeout(deadline);
-      callerSignal?.removeEventListener('abort', abortFromCaller);
+      ? { method: 'GET', headers, signal }
+      : { method: 'POST', headers, body, signal };
+    const response = await fetchImpl(`${apiUrl}/v1/${operation}`, init);
+    const payload = await parseJson(response);
+    if (!response.ok) {
+      throw parseErrorEnvelope(payload, response.status);
     }
+    return payload;
   }
 
   return {

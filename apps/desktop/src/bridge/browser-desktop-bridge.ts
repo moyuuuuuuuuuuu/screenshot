@@ -1,4 +1,4 @@
-import type { DesktopBridge } from './desktop-bridge';
+import type { AppSettings, DesktopBridge } from './desktop-bridge';
 
 export type BrowserDesktopDependencies = Readonly<{
   writeClipboard(blob: Blob): Promise<void>;
@@ -65,24 +65,19 @@ export function createBrowserDesktopBridge(
     },
     async loadSettings() {
       const storage = dependencies.storage ?? window.localStorage;
-      const stored = storage.getItem(settingsStorageKey);
-      if (stored !== null) {
-        try {
-          const value: unknown = JSON.parse(stored);
-          if (isAppSettings(value)) {
-            return value;
-          }
-        } catch {
-          // Fall through to a safe local default.
-        }
-      }
-      return {
-        shortcut: 'Alt+Shift+A',
-        cloudPrivacyAcknowledged: false,
-      };
+      return readBrowserSettings(storage);
     },
     async updateSettings(settings) {
       const storage = dependencies.storage ?? window.localStorage;
+      storage.setItem(settingsStorageKey, JSON.stringify(settings));
+      return settings;
+    },
+    async updateCloudPrivacyAcknowledgement(acknowledged) {
+      const storage = dependencies.storage ?? window.localStorage;
+      const settings = {
+        ...readBrowserSettings(storage),
+        cloudPrivacyAcknowledged: acknowledged,
+      };
       storage.setItem(settingsStorageKey, JSON.stringify(settings));
       return settings;
     },
@@ -98,6 +93,26 @@ export function createBrowserDesktopBridge(
     },
     async startWindowDragging() {},
     async closePinWindow() {},
+  };
+}
+
+function readBrowserSettings(
+  storage: NonNullable<BrowserDesktopDependencies['storage']>,
+): AppSettings {
+  const stored = storage.getItem(settingsStorageKey);
+  if (stored !== null) {
+    try {
+      const value: unknown = JSON.parse(stored);
+      if (isAppSettings(value)) {
+        return value;
+      }
+    } catch {
+      // Fall through to a safe local default.
+    }
+  }
+  return {
+    shortcut: 'Alt+Shift+A',
+    cloudPrivacyAcknowledged: false,
   };
 }
 

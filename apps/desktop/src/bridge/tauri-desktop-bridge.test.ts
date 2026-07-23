@@ -139,6 +139,27 @@ describe('createTauriDesktopBridge', () => {
     );
   });
 
+  it('updates cloud privacy acknowledgement without invoking the shortcut command', async () => {
+    const settings = {
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: true,
+    };
+    const invoke = vi.fn().mockResolvedValue(settings);
+    const bridge = createTauriDesktopBridge(invoke);
+
+    await expect(bridge.updateCloudPrivacyAcknowledgement(true)).resolves.toEqual(settings);
+
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(invoke).toHaveBeenCalledWith(
+      'update_cloud_privacy_acknowledgement',
+      { acknowledged: true },
+    );
+    expect(invoke).not.toHaveBeenCalledWith(
+      'update_shortcut',
+      expect.anything(),
+    );
+  });
+
   it('pins PNG bytes and reports copied share fallback', async () => {
     const invoke = vi.fn()
       .mockResolvedValueOnce('pin-7')

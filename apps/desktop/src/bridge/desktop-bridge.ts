@@ -44,6 +44,7 @@ export interface DesktopBridge {
   getCloudDeviceId(): Promise<string>;
   loadSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
+  updateCloudPrivacyAcknowledgement(acknowledged: boolean): Promise<AppSettings>;
   pinPng(blob: Blob, bounds: Rect): Promise<string>;
   sharePng(blob: Blob): Promise<ShareOutcome>;
   getPinnedPng(label: string): Promise<Blob>;

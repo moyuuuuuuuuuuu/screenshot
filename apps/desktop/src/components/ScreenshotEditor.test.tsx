@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DesktopBridge, LongCaptureProgress } from '../bridge/desktop-bridge';
+import type {
+  AppSettings,
+  DesktopBridge,
+  LongCaptureProgress,
+  LongCaptureResult,
+} from '../bridge/desktop-bridge';
 import {
   CloudClientError,
   type CloudClient,
@@ -39,6 +44,10 @@ function createBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
       cloudPrivacyAcknowledged: true,
     }),
     updateSettings: vi.fn(async (settings) => settings),
+    updateCloudPrivacyAcknowledgement: vi.fn(async (acknowledged) => ({
+      shortcut: 'Alt+Shift+A',
+      cloudPrivacyAcknowledged: acknowledged,
+    })),
     pinPng: vi.fn().mockResolvedValue('pin-1'),
     sharePng: vi.fn().mockResolvedValue('copiedFallback'),
     getPinnedPng: vi.fn(),
@@ -269,12 +278,18 @@ describe('ScreenshotEditor', () => {
   );
 
   it('cancels with zero uploads, then accepts and remembers the privacy acknowledgement', async () => {
+    const updateSettings = vi.fn(async (settings) => settings);
+    const updateCloudPrivacyAcknowledgement = vi.fn().mockResolvedValue({
+      shortcut: 'Ctrl+Alt+X',
+      cloudPrivacyAcknowledged: true,
+    });
     const bridge = createBridge({
       loadSettings: vi.fn().mockResolvedValue({
         shortcut: 'Ctrl+Alt+X',
         cloudPrivacyAcknowledged: false,
       }),
-      updateSettings: vi.fn(async (settings) => settings),
+      updateSettings,
+      updateCloudPrivacyAcknowledgement,
     });
     const client = createFakeCloudClient();
     render(
@@ -295,10 +310,8 @@ describe('ScreenshotEditor', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
     await userEvent.click(await screen.findByRole('button', { name: '同意并继续' }));
-    expect(bridge.updateSettings).toHaveBeenCalledWith({
-      shortcut: 'Ctrl+Alt+X',
-      cloudPrivacyAcknowledged: true,
-    });
+    expect(updateCloudPrivacyAcknowledgement).toHaveBeenCalledWith(true);
+    expect(updateSettings).not.toHaveBeenCalled();
     await screen.findByLabelText('识别原文');
     expect(client.recognize).toHaveBeenCalledOnce();
 
@@ -307,6 +320,115 @@ describe('ScreenshotEditor', () => {
     expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
       .not.toBeInTheDocument();
     await waitFor(() => expect(client.recognize).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not run the global Enter action from the privacy accept button', async () => {
+    const bridge = createBridge({
+      loadSettings: vi.fn().mockResolvedValue({
+        shortcut: 'Alt+Shift+A',
+        cloudPrivacyAcknowledged: false,
+      }),
+    });
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={bridge}
+        cloudClient={createFakeCloudClient()}
+      />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    const accept = await screen.findByRole('button', { name: '同意并继续' });
+    accept.focus();
+
+    await userEvent.keyboard('{Enter}');
+    await screen.findByLabelText('识别原文');
+
+    expect(bridge.copyPng).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+  });
+
+  it('isolates panel controls, toolbar actions and Ctrl shortcuts from the editor', async () => {
+    const bridge = createBridge();
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={bridge}
+        cloudClient={createFakeCloudClient()}
+      />,
+    );
+    selectRegion();
+    fireEvent.pointerDown(screen.getByTestId('annotation-surface'), {
+      clientX: 50,
+      clientY: 50,
+      pointerId: 2,
+    });
+    fireEvent.pointerMove(screen.getByTestId('annotation-surface'), {
+      clientX: 150,
+      clientY: 110,
+      pointerId: 2,
+    });
+    fireEvent.pointerUp(screen.getByTestId('annotation-surface'), {
+      clientX: 150,
+      clientY: 110,
+      pointerId: 2,
+    });
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    const copyText = await screen.findByRole('button', { name: '复制文字' });
+    copyText.focus();
+
+    await userEvent.keyboard('{Enter}{Control>}s{/Control}{Control>}z{/Control}');
+
+    const toolbar = screen.getByRole('toolbar', { name: '截图工具' });
+    expect(toolbar.closest('.toolbar-positioner')).toHaveAttribute('inert');
+    expect(toolbar.closest('.toolbar-positioner')).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(screen.getByRole('button', { name: '滚动截图' }));
+    expect(bridge.copyPng).not.toHaveBeenCalled();
+    expect(bridge.savePng).not.toHaveBeenCalled();
+    expect(bridge.startLongCapture).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: '关闭识别面板' }));
+    expect(screen.getByRole('button', { name: '撤销' })).toBeEnabled();
+  });
+
+  it('keeps cloud preparation mutually exclusive with long capture and closes cloud UI first', async () => {
+    let resolveSettings: ((settings: AppSettings) => void) | undefined;
+    const bridge = createBridge({
+      loadSettings: vi.fn(() => new Promise<AppSettings>((resolve) => {
+        resolveSettings = resolve;
+      })),
+      startLongCapture: vi.fn(
+        (): Promise<LongCaptureResult> => new Promise(() => undefined),
+      ),
+    });
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={bridge}
+        cloudClient={createFakeCloudClient()}
+      />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await waitFor(() => expect(bridge.loadSettings).toHaveBeenCalledOnce());
+
+    const longCapture = screen.queryByRole('button', { name: '滚动截图' });
+    if (longCapture) {
+      fireEvent.click(longCapture);
+    }
+    resolveSettings?.({
+      shortcut: 'Alt+Shift+A',
+      cloudPrivacyAcknowledged: false,
+    });
+    await screen.findByRole('dialog', { name: '云服务隐私提示' });
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(bridge.startLongCapture).not.toHaveBeenCalled();
+    expect(bridge.cancelLongCapture).not.toHaveBeenCalled();
+    expect(bridge.closeOverlay).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
+      .not.toBeInTheDocument();
   });
 
   it('reuses the exact exported Blob for translation and retry', async () => {

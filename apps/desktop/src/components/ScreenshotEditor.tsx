@@ -71,6 +71,11 @@ function safeCloudErrorMessage(error: unknown): string {
     : 'The cloud service is unavailable.';
 }
 
+function isInteractiveKeyboardTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest('button, input, textarea, select, [contenteditable="true"]') !== null;
+}
+
 export function ScreenshotEditor({
   sourceUrl,
   bridge,
@@ -99,6 +104,7 @@ export function ScreenshotEditor({
     useState<RecognitionPanelState | null>(null);
   const [quota, setQuota] = useState<QuotaResult | null>(null);
   const [pendingPrivacy, setPendingPrivacy] = useState<PendingPrivacy | null>(null);
+  const [cloudPreparing, setCloudPreparing] = useState(false);
   const [highlightedBlock, setHighlightedBlock] = useState<TextBlock | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [drawingPreview, setDrawingPreview] = useState<DrawingSession | null>(null);
@@ -119,6 +125,8 @@ export function ScreenshotEditor({
   const longCaptureCancelInFlight = useRef(false);
   const cloudSource = useRef<Blob | null>(null);
   const privacyAcknowledged = useRef<boolean | null>(null);
+  const cloudInteractionLocked = useRef(false);
+  const cloudPreparationSequence = useRef(0);
   const activeCloudRequest = useRef<AbortController | null>(null);
   const cloudRequestSequence = useRef(0);
   const toolbarPositioner = useRef<HTMLDivElement>(null);
@@ -372,7 +380,9 @@ export function ScreenshotEditor({
   }, [bridge, longCaptureProgress, selection]);
 
   const resetEditorSession = useCallback(() => {
+    cloudPreparationSequence.current += 1;
     cloudRequestSequence.current += 1;
+    cloudInteractionLocked.current = false;
     activeCloudRequest.current?.abort();
     activeCloudRequest.current = null;
     dispatchCapture({ type: 'sessionReset' });
@@ -383,6 +393,7 @@ export function ScreenshotEditor({
     setRecognitionState(null);
     setQuota(null);
     setPendingPrivacy(null);
+    setCloudPreparing(false);
     setHighlightedBlock(null);
     setToast(null);
     setDrawingPreview(null);
@@ -455,6 +466,7 @@ export function ScreenshotEditor({
 
   const closeRecognitionPanel = useCallback(() => {
     cloudRequestSequence.current += 1;
+    cloudInteractionLocked.current = false;
     activeCloudRequest.current?.abort();
     activeCloudRequest.current = null;
     setRecognitionState(null);
@@ -464,34 +476,43 @@ export function ScreenshotEditor({
   }, []);
 
   const runOcr = useCallback(async () => {
+    if (cloudInteractionLocked.current || longCaptureProgress) return;
+    cloudInteractionLocked.current = true;
+    setCloudPreparing(true);
+    const preparationSequence = ++cloudPreparationSequence.current;
     try {
       const image = await exportSelection();
+      if (preparationSequence !== cloudPreparationSequence.current) return;
       cloudSource.current = image;
       if (privacyAcknowledged.current === true) {
         void performRecognition('ocr', image);
+        setCloudPreparing(false);
         return;
       }
 
       const settings = await bridge.loadSettings();
+      if (preparationSequence !== cloudPreparationSequence.current) return;
       privacyAcknowledged.current = settings.cloudPrivacyAcknowledged;
       if (settings.cloudPrivacyAcknowledged) {
         void performRecognition('ocr', image);
       } else {
         setPendingPrivacy({ image, mode: 'ocr', settings });
       }
+      setCloudPreparing(false);
     } catch {
-      setError('无法准备云服务请求，请重试');
+      if (preparationSequence === cloudPreparationSequence.current) {
+        cloudInteractionLocked.current = false;
+        setCloudPreparing(false);
+        setError('无法准备云服务请求，请重试');
+      }
     }
-  }, [bridge, exportSelection, performRecognition]);
+  }, [bridge, exportSelection, longCaptureProgress, performRecognition]);
 
   const acceptPrivacy = useCallback(async () => {
     const pending = pendingPrivacy;
     if (!pending) return;
     try {
-      await bridge.updateSettings({
-        shortcut: pending.settings.shortcut,
-        cloudPrivacyAcknowledged: true,
-      });
+      await bridge.updateCloudPrivacyAcknowledgement(true);
       privacyAcknowledged.current = true;
       setPendingPrivacy(null);
       void performRecognition(pending.mode, pending.image);
@@ -501,7 +522,15 @@ export function ScreenshotEditor({
   }, [bridge, pendingPrivacy, performRecognition]);
 
   const cancelPrivacy = useCallback(() => {
+    cloudInteractionLocked.current = false;
     setPendingPrivacy(null);
+    cloudSource.current = null;
+  }, []);
+
+  const cancelCloudPreparation = useCallback(() => {
+    cloudPreparationSequence.current += 1;
+    cloudInteractionLocked.current = false;
+    setCloudPreparing(false);
     cloudSource.current = null;
   }, []);
 
@@ -549,7 +578,7 @@ export function ScreenshotEditor({
 
   const handleAction = useCallback(
     (action: WechatToolbarAction) => {
-      if (longCaptureProgress) return;
+      if (longCaptureProgress || cloudInteractionLocked.current) return;
       if (['rectangle', 'ellipse', 'emoji', 'arrow', 'pen', 'text', 'mosaic'].includes(action)) {
         setActiveTool(action as Tool);
         setTextPosition(null);
@@ -570,14 +599,26 @@ export function ScreenshotEditor({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        if (longCaptureProgress || longCaptureCancelInFlight.current) {
-          void cancelLongCaptureAndClose();
-        } else if (pendingPrivacy) {
+        if (pendingPrivacy) {
           cancelPrivacy();
         } else if (recognitionState) {
           closeRecognitionPanel();
+        } else if (cloudPreparing) {
+          cancelCloudPreparation();
+        } else if (longCaptureProgress || longCaptureCancelInFlight.current) {
+          void cancelLongCaptureAndClose();
         } else {
           void bridge.closeOverlay();
+        }
+        return;
+      }
+      if (cloudPreparing || pendingPrivacy || recognitionState) {
+        if (event.key === 'Enter') {
+          if (!isInteractiveKeyboardTarget(event.target)) {
+            event.preventDefault();
+          }
+        } else if (event.ctrlKey && ['s', 'z'].includes(event.key.toLowerCase())) {
+          event.preventDefault();
         }
         return;
       }
@@ -585,7 +626,9 @@ export function ScreenshotEditor({
         event.preventDefault();
         return;
       }
-      if (event.key === 'Enter') void copyAndClose();
+      if (event.key === 'Enter' && !isInteractiveKeyboardTarget(event.target)) {
+        void copyAndClose();
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         void save();
@@ -600,7 +643,9 @@ export function ScreenshotEditor({
   }, [
     bridge,
     cancelLongCaptureAndClose,
+    cancelCloudPreparation,
     cancelPrivacy,
+    cloudPreparing,
     closeRecognitionPanel,
     copyAndClose,
     longCaptureProgress,
@@ -726,6 +771,10 @@ export function ScreenshotEditor({
         <div
           ref={toolbarPositioner}
           className="toolbar-positioner"
+          inert={cloudPreparing || Boolean(pendingPrivacy) || Boolean(recognitionState)
+            ? true
+            : undefined}
+          aria-disabled={cloudPreparing || Boolean(pendingPrivacy) || Boolean(recognitionState)}
           style={{ left: toolbarLeft, top: toolbarTop }}
         >
           <WechatToolbar

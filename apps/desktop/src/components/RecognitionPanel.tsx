@@ -5,6 +5,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
+import { useRef } from 'react';
 
 import type {
   QuotaResult,
@@ -130,21 +131,54 @@ function OcrContent({
       {result.blocks.length > 0 ? (
         <ul className="recognition-panel__blocks" aria-label="识别文字块">
           {result.blocks.map((block, index) => (
-            <li
-              className="recognition-panel__block"
+            <HighlightableBlock
               key={`${index}-${block.x}-${block.y}`}
-              tabIndex={0}
-              onMouseEnter={() => onBlockHighlight(block)}
-              onMouseLeave={() => onBlockHighlight(null)}
-              onFocus={() => onBlockHighlight(block)}
-              onBlur={() => onBlockHighlight(null)}
-            >
-              {block.text}
-            </li>
+              block={block}
+              onBlockHighlight={onBlockHighlight}
+            />
           ))}
         </ul>
       ) : null}
     </div>
+  );
+}
+
+function HighlightableBlock({
+  block,
+  onBlockHighlight,
+}: Readonly<{
+  block: TextBlock;
+  onBlockHighlight(block: TextBlock | null): void;
+}>) {
+  const hovered = useRef(false);
+  const focused = useRef(false);
+  const notify = () => {
+    onBlockHighlight(hovered.current || focused.current ? block : null);
+  };
+
+  return (
+    <li
+      className="recognition-panel__block"
+      tabIndex={0}
+      onMouseEnter={() => {
+        hovered.current = true;
+        notify();
+      }}
+      onMouseLeave={() => {
+        hovered.current = false;
+        notify();
+      }}
+      onFocus={() => {
+        focused.current = true;
+        notify();
+      }}
+      onBlur={() => {
+        focused.current = false;
+        notify();
+      }}
+    >
+      {block.text}
+    </li>
   );
 }
 
