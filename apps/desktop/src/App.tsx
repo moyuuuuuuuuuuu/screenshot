@@ -29,6 +29,10 @@ type ScrollMaskLayout = Readonly<{
   edgeLength: number;
 }>;
 
+type ScrollPreviewLayout = Readonly<{
+  side: 'left' | 'right';
+}>;
+
 export function captureFrameSource(frames: readonly MonitorFrame[]): string {
   const first = frames[0];
   return first ? `data:image/png;base64,${first.pngBase64}` : '';
@@ -55,6 +59,9 @@ export function App() {
     edgeStart: Number(windowParameters.get('edgeStart')) || 0,
     edgeLength: Number(windowParameters.get('edgeLength')) || 0,
   }));
+  const [previewSide, setPreviewSide] = useState<'left' | 'right'>(() =>
+    windowParameters.get('side') === 'left' ? 'left' : 'right'
+  );
   const latestSessionId = useRef(0);
 
   useEffect(() => {
@@ -96,6 +103,11 @@ export function App() {
         setMaskLayout(event.payload);
       }).then(retainUnlisten).catch(() => undefined);
     }
+    if (controlWindow) {
+      void listen<ScrollPreviewLayout>('scroll-preview-layout', (event) => {
+        setPreviewSide(event.payload.side);
+      }).then(retainUnlisten).catch(() => undefined);
+    }
     void listen('settings-requested', () => {
       void desktopBridge.loadSettings().then(setSettings).catch((error: unknown) => {
         setCaptureError(error instanceof Error ? error.message : '无法读取设置');
@@ -123,8 +135,9 @@ export function App() {
       </div>
     );
   }
-  if (controlWindow) return <ScrollCapturePreview bridge={desktopBridge}
-    side={windowParameters.get('side') === 'left' ? 'left' : 'right'} />;
+  if (controlWindow) {
+    return <ScrollCapturePreview bridge={desktopBridge} side={previewSide} />;
+  }
   if (pinLabel) return <PinWindow label={pinLabel} bridge={desktopBridge} />;
 
   return (

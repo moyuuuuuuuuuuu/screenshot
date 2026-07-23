@@ -32,6 +32,12 @@ pub(crate) struct PreviewLayout {
     pub side: PreviewSide,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewWindowUpdate {
+    side: &'static str,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PreviewWindowPolicy {
     focused: bool,
@@ -44,6 +50,20 @@ fn preview_window_policy() -> PreviewWindowPolicy {
         focused: false,
         focusable: false,
         transparent: false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreviewWindowOperation {
+    Reuse,
+    Create,
+}
+
+fn preview_window_operation(exists: bool) -> PreviewWindowOperation {
+    if exists {
+        PreviewWindowOperation::Reuse
+    } else {
+        PreviewWindowOperation::Create
     }
 }
 
@@ -276,15 +296,31 @@ pub(crate) fn open_preview_window(
     selection: ScreenRect,
     monitor: ScreenRect,
 ) -> Result<tauri::WebviewWindow, String> {
-    if let Some(existing) = tauri::Manager::get_webview_window(app, "scroll-capture-preview") {
-        let _ = existing.hide();
-        let _ = existing.close();
-    }
     let layout = preview_window_layout(selection, monitor)?;
     let side = match layout.side {
         PreviewSide::Left => "left",
         PreviewSide::Right => "right",
     };
+    let existing = app.get_webview_window("scroll-capture-preview");
+    if preview_window_operation(existing.is_some()) == PreviewWindowOperation::Reuse {
+        let window = existing.ok_or_else(|| "missing reusable scroll preview".to_string())?;
+        window
+            .set_position(PhysicalPosition::new(layout.x, layout.y))
+            .map_err(|error| format!("failed to position scroll preview: {error}"))?;
+        window
+            .set_size(PhysicalSize::new(layout.width as u32, layout.height as u32))
+            .map_err(|error| format!("failed to size scroll preview: {error}"))?;
+        app.emit_to(
+            "scroll-capture-preview",
+            "scroll-preview-layout",
+            PreviewWindowUpdate { side },
+        )
+        .map_err(|error| format!("failed to update scroll preview layout: {error}"))?;
+        window
+            .show()
+            .map_err(|error| format!("failed to show scroll preview: {error}"))?;
+        return Ok(window);
+    }
     let policy = preview_window_policy();
     WebviewWindowBuilder::new(
         app,
@@ -422,9 +458,22 @@ fn configure_mask_window(window: &tauri::WebviewWindow, layout: MaskLayout) -> R
 mod tests {
     use super::{
         deactivate_mask_labels, mask_window_layouts, mask_window_lifecycle_plan,
-        preview_window_layout, preview_window_policy, MaskWindowOperation, PreviewLayout,
-        PreviewSide, ScreenRect, MASK_WINDOW_OPACITY,
+        preview_window_layout, preview_window_operation, preview_window_policy,
+        MaskWindowOperation, PreviewLayout, PreviewSide, PreviewWindowOperation, ScreenRect,
+        MASK_WINDOW_OPACITY,
     };
+
+    #[test]
+    fn existing_preview_window_is_reused_instead_of_recreated() {
+        assert_eq!(
+            preview_window_operation(true),
+            PreviewWindowOperation::Reuse
+        );
+        assert_eq!(
+            preview_window_operation(false),
+            PreviewWindowOperation::Create
+        );
+    }
 
     #[test]
     fn long_capture_mask_opacity_is_thirty_percent() {

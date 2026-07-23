@@ -103,6 +103,25 @@ describe('App', () => {
       .toHaveStyle('--edge-start: 80px; --edge-length: 640px');
   });
 
+  it('updates a reused scroll preview side from the native layout event', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?window=scroll-capture-preview&side=right',
+    );
+    const { container } = render(<App />);
+    await act(async () => undefined);
+    expect(container.querySelector('.scroll-sidecar'))
+      .toHaveAttribute('data-side', 'right');
+
+    act(() => tauriListeners.get('scroll-preview-layout')?.({
+      payload: { side: 'left' },
+    }));
+
+    expect(container.querySelector('.scroll-sidecar'))
+      .toHaveAttribute('data-side', 'left');
+  });
+
   it('clears an old selection when the native long-capture session resets', async () => {
     render(<App />);
     await act(async () => undefined);
