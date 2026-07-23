@@ -125,60 +125,45 @@ function OcrContent({
   result: RecognitionResult;
   onBlockHighlight(block: TextBlock | null): void;
 }>) {
+  const hoveredBlock = useRef<TextBlock | null>(null);
+  const focusedBlock = useRef<TextBlock | null>(null);
+  const notifyHighlight = () => {
+    onBlockHighlight(hoveredBlock.current ?? focusedBlock.current);
+  };
+
   return (
     <div className="recognition-panel__content">
       <pre aria-label="识别原文">{result.originalText}</pre>
       {result.blocks.length > 0 ? (
         <ul className="recognition-panel__blocks" aria-label="识别文字块">
           {result.blocks.map((block, index) => (
-            <HighlightableBlock
+            <li
+              className="recognition-panel__block"
               key={`${index}-${block.x}-${block.y}`}
-              block={block}
-              onBlockHighlight={onBlockHighlight}
-            />
+              tabIndex={0}
+              onMouseEnter={() => {
+                hoveredBlock.current = block;
+                notifyHighlight();
+              }}
+              onMouseLeave={() => {
+                if (hoveredBlock.current === block) hoveredBlock.current = null;
+                notifyHighlight();
+              }}
+              onFocus={() => {
+                focusedBlock.current = block;
+                notifyHighlight();
+              }}
+              onBlur={() => {
+                if (focusedBlock.current === block) focusedBlock.current = null;
+                notifyHighlight();
+              }}
+            >
+              {block.text}
+            </li>
           ))}
         </ul>
       ) : null}
     </div>
-  );
-}
-
-function HighlightableBlock({
-  block,
-  onBlockHighlight,
-}: Readonly<{
-  block: TextBlock;
-  onBlockHighlight(block: TextBlock | null): void;
-}>) {
-  const hovered = useRef(false);
-  const focused = useRef(false);
-  const notify = () => {
-    onBlockHighlight(hovered.current || focused.current ? block : null);
-  };
-
-  return (
-    <li
-      className="recognition-panel__block"
-      tabIndex={0}
-      onMouseEnter={() => {
-        hovered.current = true;
-        notify();
-      }}
-      onMouseLeave={() => {
-        hovered.current = false;
-        notify();
-      }}
-      onFocus={() => {
-        focused.current = true;
-        notify();
-      }}
-      onBlur={() => {
-        focused.current = false;
-        notify();
-      }}
-    >
-      {block.text}
-    </li>
   );
 }
 

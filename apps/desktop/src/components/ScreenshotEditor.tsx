@@ -104,6 +104,7 @@ export function ScreenshotEditor({
     useState<RecognitionPanelState | null>(null);
   const [quota, setQuota] = useState<QuotaResult | null>(null);
   const [pendingPrivacy, setPendingPrivacy] = useState<PendingPrivacy | null>(null);
+  const [privacyConsentSaving, setPrivacyConsentSaving] = useState(false);
   const [cloudPreparing, setCloudPreparing] = useState(false);
   const [highlightedBlock, setHighlightedBlock] = useState<TextBlock | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -125,6 +126,10 @@ export function ScreenshotEditor({
   const longCaptureCancelInFlight = useRef(false);
   const cloudSource = useRef<Blob | null>(null);
   const privacyAcknowledged = useRef<boolean | null>(null);
+  const mounted = useRef(true);
+  const pendingPrivacyOwner = useRef<PendingPrivacy | null>(null);
+  const consentAttemptSequence = useRef(0);
+  const consentInFlight = useRef(false);
   const cloudInteractionLocked = useRef(false);
   const cloudPreparationSequence = useRef(0);
   const activeCloudRequest = useRef<AbortController | null>(null);
@@ -142,10 +147,18 @@ export function ScreenshotEditor({
     if (generatedSourceUrl.current) URL.revokeObjectURL(generatedSourceUrl.current);
   }, []);
 
-  useEffect(() => () => {
-    cloudRequestSequence.current += 1;
-    activeCloudRequest.current?.abort();
-    activeCloudRequest.current = null;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      cloudPreparationSequence.current += 1;
+      consentAttemptSequence.current += 1;
+      consentInFlight.current = false;
+      pendingPrivacyOwner.current = null;
+      cloudRequestSequence.current += 1;
+      activeCloudRequest.current?.abort();
+      activeCloudRequest.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -381,7 +394,10 @@ export function ScreenshotEditor({
 
   const resetEditorSession = useCallback(() => {
     cloudPreparationSequence.current += 1;
+    consentAttemptSequence.current += 1;
     cloudRequestSequence.current += 1;
+    consentInFlight.current = false;
+    pendingPrivacyOwner.current = null;
     cloudInteractionLocked.current = false;
     activeCloudRequest.current?.abort();
     activeCloudRequest.current = null;
@@ -393,6 +409,7 @@ export function ScreenshotEditor({
     setRecognitionState(null);
     setQuota(null);
     setPendingPrivacy(null);
+    setPrivacyConsentSaving(false);
     setCloudPreparing(false);
     setHighlightedBlock(null);
     setToast(null);
@@ -424,6 +441,7 @@ export function ScreenshotEditor({
     mode: 'ocr' | 'translate',
     image: Blob,
   ) => {
+    if (!mounted.current) return;
     activeCloudRequest.current?.abort();
     const controller = new AbortController();
     activeCloudRequest.current = controller;
@@ -480,9 +498,13 @@ export function ScreenshotEditor({
     cloudInteractionLocked.current = true;
     setCloudPreparing(true);
     const preparationSequence = ++cloudPreparationSequence.current;
+    const ownsPreparation = () => (
+      mounted.current
+      && preparationSequence === cloudPreparationSequence.current
+    );
     try {
       const image = await exportSelection();
-      if (preparationSequence !== cloudPreparationSequence.current) return;
+      if (!ownsPreparation()) return;
       cloudSource.current = image;
       if (privacyAcknowledged.current === true) {
         void performRecognition('ocr', image);
@@ -491,16 +513,18 @@ export function ScreenshotEditor({
       }
 
       const settings = await bridge.loadSettings();
-      if (preparationSequence !== cloudPreparationSequence.current) return;
+      if (!ownsPreparation()) return;
       privacyAcknowledged.current = settings.cloudPrivacyAcknowledged;
       if (settings.cloudPrivacyAcknowledged) {
         void performRecognition('ocr', image);
       } else {
-        setPendingPrivacy({ image, mode: 'ocr', settings });
+        const pending = { image, mode: 'ocr' as const, settings };
+        pendingPrivacyOwner.current = pending;
+        setPendingPrivacy(pending);
       }
       setCloudPreparing(false);
     } catch {
-      if (preparationSequence === cloudPreparationSequence.current) {
+      if (ownsPreparation()) {
         cloudInteractionLocked.current = false;
         setCloudPreparing(false);
         setError('无法准备云服务请求，请重试');
@@ -510,19 +534,45 @@ export function ScreenshotEditor({
 
   const acceptPrivacy = useCallback(async () => {
     const pending = pendingPrivacy;
-    if (!pending) return;
+    if (
+      !pending
+      || pendingPrivacyOwner.current !== pending
+      || consentInFlight.current
+    ) return;
+    consentInFlight.current = true;
+    setPrivacyConsentSaving(true);
+    const attemptSequence = ++consentAttemptSequence.current;
     try {
       await bridge.updateCloudPrivacyAcknowledgement(true);
+      if (
+        !mounted.current
+        || attemptSequence !== consentAttemptSequence.current
+        || pendingPrivacyOwner.current !== pending
+      ) return;
       privacyAcknowledged.current = true;
+      consentInFlight.current = false;
+      pendingPrivacyOwner.current = null;
+      setPrivacyConsentSaving(false);
       setPendingPrivacy(null);
       void performRecognition(pending.mode, pending.image);
     } catch {
+      if (
+        !mounted.current
+        || attemptSequence !== consentAttemptSequence.current
+        || pendingPrivacyOwner.current !== pending
+      ) return;
+      consentInFlight.current = false;
+      setPrivacyConsentSaving(false);
       setError('无法保存隐私设置，未上传截图');
     }
   }, [bridge, pendingPrivacy, performRecognition]);
 
   const cancelPrivacy = useCallback(() => {
+    consentAttemptSequence.current += 1;
+    consentInFlight.current = false;
+    pendingPrivacyOwner.current = null;
     cloudInteractionLocked.current = false;
+    setPrivacyConsentSaving(false);
     setPendingPrivacy(null);
     cloudSource.current = null;
   }, []);
@@ -807,7 +857,12 @@ export function ScreenshotEditor({
               <button type="button" aria-label="取消云服务" onClick={cancelPrivacy}>
                 取消
               </button>
-              <button type="button" aria-label="同意并继续" onClick={() => void acceptPrivacy()}>
+              <button
+                type="button"
+                aria-label="同意并继续"
+                disabled={privacyConsentSaving}
+                onClick={() => void acceptPrivacy()}
+              >
                 同意并继续
               </button>
             </div>

@@ -12,13 +12,20 @@ const firstBlock: TextBlock = {
   width: 0.3,
   height: 0.1,
 };
+const secondBlock: TextBlock = {
+  text: '第二段',
+  x: 0.2,
+  y: 0.4,
+  width: 0.4,
+  height: 0.1,
+};
 const ocrResult: RecognitionResult = {
   sourceLanguage: 'zh',
   originalText: '第一段\n第二段',
   translatedText: null,
   blocks: [
     firstBlock,
-    { text: '第二段', x: 0.2, y: 0.4, width: 0.4, height: 0.1 },
+    secondBlock,
   ],
 };
 const quota: QuotaResult = {
@@ -125,6 +132,32 @@ describe('RecognitionPanel', () => {
     expect(screen.queryByRole('button', { name: '翻译识别结果' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '复制文字' }));
     expect(onCopy).toHaveBeenCalledWith('你好');
+  });
+
+  it('restores the focused block after a different hovered block is left', () => {
+    const onHighlight = vi.fn();
+    render(
+      <RecognitionPanel
+        state={{ status: 'success', mode: 'ocr', result: ocrResult }}
+        quota={null}
+        onClose={vi.fn()}
+        onRetry={vi.fn()}
+        onCopy={vi.fn()}
+        onTranslate={vi.fn()}
+        onBlockHighlight={onHighlight}
+      />,
+    );
+    const first = screen.getByText('第一段', { selector: '.recognition-panel__block' });
+    const second = screen.getByText('第二段', { selector: '.recognition-panel__block' });
+
+    fireEvent.focus(first);
+    fireEvent.mouseEnter(second);
+    fireEvent.mouseLeave(second);
+
+    expect(onHighlight).toHaveBeenNthCalledWith(1, firstBlock);
+    expect(onHighlight).toHaveBeenNthCalledWith(2, secondBlock);
+    expect(onHighlight).toHaveBeenNthCalledWith(3, firstBlock);
+    expect(onHighlight).not.toHaveBeenCalledWith(null);
   });
 
   it('shows only the safe error with icon-only retry and close actions', async () => {

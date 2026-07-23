@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -67,6 +67,14 @@ function createFakeCloudClient(overrides: Partial<CloudClient> = {}): CloudClien
     }),
     ...overrides,
   };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 function selectRegion(
@@ -348,6 +356,91 @@ describe('ScreenshotEditor', () => {
     expect(bridge.closeOverlay).not.toHaveBeenCalled();
   });
 
+  it.each(['button', 'escape', 'unmount'] as const)(
+    'does not upload when privacy persistence resolves after %s cancellation',
+    async (dismissal) => {
+      const acknowledgement = createDeferred<AppSettings>();
+      const bridge = createBridge({
+        loadSettings: vi.fn().mockResolvedValue({
+          shortcut: 'Alt+Shift+A',
+          cloudPrivacyAcknowledged: false,
+        }),
+        updateCloudPrivacyAcknowledgement: vi.fn(() => acknowledgement.promise),
+      });
+      const client = createFakeCloudClient();
+      const view = render(
+        <ScreenshotEditor sourceUrl="" bridge={bridge} cloudClient={client} />,
+      );
+      selectRegion();
+      await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+      fireEvent.click(await screen.findByRole('button', { name: '同意并继续' }));
+      expect(bridge.updateCloudPrivacyAcknowledgement).toHaveBeenCalledOnce();
+
+      if (dismissal === 'button') {
+        await userEvent.click(screen.getByRole('button', { name: '取消云服务' }));
+      } else if (dismissal === 'escape') {
+        await userEvent.keyboard('{Escape}');
+      } else {
+        view.unmount();
+      }
+      expect(screen.queryByRole('dialog', { name: '云服务隐私提示' }))
+        .not.toBeInTheDocument();
+
+      await act(async () => {
+        acknowledgement.resolve({
+          shortcut: 'Alt+Shift+A',
+          cloudPrivacyAcknowledged: true,
+        });
+        await acknowledgement.promise;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(client.recognize).not.toHaveBeenCalled();
+      expect(client.quota).not.toHaveBeenCalled();
+    },
+  );
+
+  it('persists and uploads only once when privacy acceptance is clicked twice', async () => {
+    const acknowledgement = createDeferred<AppSettings>();
+    const updateCloudPrivacyAcknowledgement = vi.fn(() => acknowledgement.promise);
+    const client = createFakeCloudClient();
+    render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={createBridge({
+          loadSettings: vi.fn().mockResolvedValue({
+            shortcut: 'Alt+Shift+A',
+            cloudPrivacyAcknowledged: false,
+          }),
+          updateCloudPrivacyAcknowledgement,
+        })}
+        cloudClient={client}
+      />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    const accept = await screen.findByRole('button', { name: '同意并继续' });
+
+    fireEvent.click(accept);
+    fireEvent.click(accept);
+
+    expect(updateCloudPrivacyAcknowledgement).toHaveBeenCalledOnce();
+    expect(accept).toBeDisabled();
+    await act(async () => {
+      acknowledgement.resolve({
+        shortcut: 'Alt+Shift+A',
+        cloudPrivacyAcknowledged: true,
+      });
+      await acknowledgement.promise;
+    });
+    await screen.findByLabelText('识别原文');
+    await waitFor(() => {
+      expect(client.recognize).toHaveBeenCalledOnce();
+      expect(client.quota).toHaveBeenCalledOnce();
+    });
+  });
+
   it('isolates panel controls, toolbar actions and Ctrl shortcuts from the editor', async () => {
     const bridge = createBridge();
     render(
@@ -540,6 +633,67 @@ describe('ScreenshotEditor', () => {
     unmount();
 
     expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it('does not start cloud work when export resolves after unmount', async () => {
+    let finishExport: ((blob: Blob | null) => void) | undefined;
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
+      (callback) => {
+        finishExport = callback;
+      },
+    );
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const client = createFakeCloudClient();
+    const view = render(
+      <ScreenshotEditor
+        sourceUrl=""
+        bridge={createBridge()}
+        cloudClient={client}
+      />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await waitFor(() => expect(finishExport).toBeDefined());
+
+    view.unmount();
+    await act(async () => {
+      finishExport?.(new Blob(['png'], { type: 'image/png' }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(client.recognize).not.toHaveBeenCalled();
+    expect(client.quota).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('does not start cloud work when settings resolve after unmount', async () => {
+    const settings = createDeferred<AppSettings>();
+    const bridge = createBridge({
+      loadSettings: vi.fn(() => settings.promise),
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const client = createFakeCloudClient();
+    const view = render(
+      <ScreenshotEditor sourceUrl="" bridge={bridge} cloudClient={client} />,
+    );
+    selectRegion();
+    await userEvent.click(screen.getByRole('button', { name: '文字识别' }));
+    await waitFor(() => expect(bridge.loadSettings).toHaveBeenCalledOnce());
+
+    view.unmount();
+    await act(async () => {
+      settings.resolve({
+        shortcut: 'Alt+Shift+A',
+        cloudPrivacyAcknowledged: true,
+      });
+      await settings.promise;
+      await Promise.resolve();
+    });
+
+    expect(client.recognize).not.toHaveBeenCalled();
+    expect(client.quota).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it('Escape dismisses privacy with no request and does not close the overlay', async () => {
