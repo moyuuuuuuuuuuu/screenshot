@@ -114,7 +114,7 @@ export class CozeOcrTranslationProvider implements OcrTranslationProvider {
       signal,
     );
     const uploadEnvelope = uploadEnvelopeSchema.safeParse(
-      await this.readJson(uploadResponse),
+      await this.readJson(uploadResponse, signal),
     );
     if (!uploadEnvelope.success) {
       throw new ProviderError('PROVIDER_INVALID_RESPONSE');
@@ -139,7 +139,7 @@ export class CozeOcrTranslationProvider implements OcrTranslationProvider {
       signal,
     );
     const workflowEnvelope = workflowEnvelopeSchema.safeParse(
-      await this.readJson(workflowResponse),
+      await this.readJson(workflowResponse, signal),
     );
     if (!workflowEnvelope.success) {
       throw new ProviderError('PROVIDER_INVALID_RESPONSE');
@@ -198,11 +198,18 @@ export class CozeOcrTranslationProvider implements OcrTranslationProvider {
     }
   }
 
-  private async readJson(response: Response): Promise<unknown> {
+  private async readJson(response: Response, signal: AbortSignal): Promise<unknown> {
     try {
       return (await response.json()) as unknown;
-    } catch {
-      throw new ProviderError('PROVIDER_INVALID_RESPONSE');
+    } catch (error) {
+      if (signal.aborted) {
+        throw new ProviderError('PROVIDER_TIMEOUT');
+      }
+      throw new ProviderError(
+        error instanceof SyntaxError
+          ? 'PROVIDER_INVALID_RESPONSE'
+          : 'PROVIDER_UNAVAILABLE',
+      );
     }
   }
 }

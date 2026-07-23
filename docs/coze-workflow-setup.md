@@ -84,6 +84,8 @@ be a string. Languages other than `zh` and `en` produce the service's
 ```dotenv
 NODE_ENV=production
 CLOUD_PROVIDER=coze
+HOST=127.0.0.1
+PORT=3000
 REQUEST_SIGNING_SECRET=<strong server-side signing secret>
 COZE_API_BASE_URL=https://api.coze.cn
 COZE_API_TOKEN=<Coze PAT>
@@ -93,6 +95,10 @@ COZE_WORKFLOW_ID=<published workflow ID>
 `COZE_API_BASE_URL`, `COZE_API_TOKEN`, and `COZE_WORKFLOW_ID` are all required
 when `CLOUD_PROVIDER=coze`. Production refuses every provider except `coze`.
 Development and tests may use `CLOUD_PROVIDER=mock`.
+
+`HOST` defaults to `127.0.0.1` and `PORT` defaults to `3000`. Set `HOST=0.0.0.0`
+only when the deployment platform requires the process to accept external
+connections and a network boundary protects the service.
 
 Treat the PAT, signing secret, workflow ID, screenshots, recognized text, and
 translations as sensitive. Store secrets only in the cloud deployment's secret
@@ -106,10 +112,30 @@ Official Coze API references:
 
 ## 4. Smoke-test this project's cloud endpoint
 
-Start the cloud service with the production variables above. Generate a valid
-request timestamp and HMAC signature using this project's request-signing
-contract, then call the OCR endpoint. The following example requires GNU
-`date`, `sha256sum`, and `openssl`:
+From the repository root, install dependencies, compile the cloud package, and
+start its runtime entry:
+
+```bash
+pnpm install
+pnpm --filter @screenshot/cloud build
+pnpm --filter @screenshot/cloud start
+```
+
+For a development Mock-provider run, set the variables from
+`apps/cloud/.env.example` in the shell and use:
+
+```bash
+pnpm --filter @screenshot/cloud dev
+```
+
+The `dev` command compiles and starts the same runtime entry. This project does
+not implicitly load `.env` files; export the variables in the shell or configure
+them in the deployment environment before starting.
+
+With the production variables above exported and the server running, generate a
+valid request timestamp and HMAC signature using this project's request-signing
+contract, then call the OCR endpoint. The following example requires GNU `date`,
+`sha256sum`, and `openssl`:
 
 ```bash
 DEVICE_ID='01234567-89ab-cdef-0123-456789abcdef'

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "pnpm build && pnpm start",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },

@@ -321,6 +321,21 @@ describe('CozeOcrTranslationProvider response validation', () => {
     expect(error.message).not.toContain(rawDetail);
     expect(error.message).not.toContain(token);
   });
+
+  it('maps a 2xx response body stream failure to PROVIDER_UNAVAILABLE', async () => {
+    const rawDetail = `${token} private body failure https://debug.example/private`;
+    const provider = createProvider(
+      sequenceFetch([failedBodyResponse(new Error(rawDetail))]),
+    );
+
+    const error = await captureProviderError(() =>
+      provider.recognize('ocr', image, 'private-request-id'),
+    );
+
+    expect(error.code).toBe('PROVIDER_UNAVAILABLE');
+    expect(error.message).not.toContain(rawDetail);
+    expect(error.message).not.toContain(token);
+  });
 });
 
 describe('cloud provider environment selection', () => {
@@ -415,6 +430,20 @@ function textResponse(body: string, status: number): Response {
 
 function workflowResponse(output: unknown): Response {
   return jsonResponse({ code: 0, data: JSON.stringify(output) });
+}
+
+function failedBodyResponse(error: Error): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(error);
+      },
+    }),
+    {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    },
+  );
 }
 
 function sequenceFetch(responses: Response[]): typeof fetch {
