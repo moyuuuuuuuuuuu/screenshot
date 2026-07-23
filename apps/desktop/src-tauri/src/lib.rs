@@ -4,6 +4,7 @@ pub mod cloud_identity;
 pub mod frame_stability;
 pub mod hotkey;
 pub mod long_capture;
+mod long_capture_cycle;
 pub mod output;
 pub mod pin_window;
 mod platform;
