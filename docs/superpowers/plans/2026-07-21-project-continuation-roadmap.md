@@ -447,11 +447,11 @@ export interface CloudClient {
 }
 ```
 
-- [ ] Test loading, success, retry, abort, quota exhaustion, provider timeout, and malformed response states.
-- [ ] Show OCR text blocks with hover-to-highlight; show translation as original/translated pairs.
-- [ ] Preserve selection and annotation history for every cloud error.
-- [ ] Show the third-party upload privacy notice before the first cloud request and persist only the acknowledgement.
-- [ ] Commit with `git commit -m "feat: add OCR and translation result panel"`.
+- [x] Test loading, success, retry, abort, quota exhaustion, provider timeout, and malformed response states.
+- [x] Show OCR text blocks with hover-to-highlight; show translation as original/translated pairs.
+- [x] Preserve selection and annotation history for every cloud error.
+- [x] Show the third-party upload privacy notice before the first cloud request and persist only the acknowledgement.
+- [x] Commit with `git commit -m "feat: add OCR and translation result panel"`.
 
 ---
 
@@ -571,3 +571,11 @@ Use this prompt on the next device:
 - Verified: focused Coze/runtime/server tests 80/80, workspace tests 194/194, root typecheck, cloud build, task-level review.
 - Blockers: live Coze smoke test still requires a server-side PAT and a published workflow ID; no credentials are stored in the repository or desktop app.
 - Next action: Task D4, replace desktop direct-Coze calls with the cloud client, result panel, retry/error states, quota view, and first-upload privacy acknowledgement.
+
+### 2026-07-23 14:30 — desktop cloud integration
+
+- Branch: `main`
+- HEAD: `b15c521 fix: persist desktop settings atomically`
+- Verified: cloud tests 105/105, desktop tests 161/161, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, and two independent task-level reviews.
+- Blockers: live Coze smoke testing still requires a server-side PAT and published workflow ID. User-reported long-capture defects remain intentionally deferred until the primary feature and release pipeline are complete.
+- Next action: Task E1, add pull-request CI, Windows MSI/NSIS artifact builds, signing gates, and the release checklist.
