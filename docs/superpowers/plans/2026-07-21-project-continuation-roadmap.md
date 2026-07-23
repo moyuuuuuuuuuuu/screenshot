@@ -465,11 +465,11 @@ export interface CloudClient {
 - Modify: `apps/desktop/src-tauri/tauri.conf.json`
 - Create: `docs/release-checklist.md`
 
-- [ ] CI on pull requests runs `pnpm install --frozen-lockfile`, tests, typecheck, Vite build, Rust tests, and clippy.
-- [ ] Windows release workflow builds signed artifacts only when repository secrets are present; unsigned debug builds remain available for internal testing.
-- [ ] Add application icons for every size required by Tauri and Windows.
+- [x] CI on pull requests runs `pnpm install --frozen-lockfile`, tests, typecheck, Vite build, Rust tests, and clippy.
+- [x] Windows release workflow builds signed artifacts only when repository secrets are present; unsigned debug builds remain available for internal testing.
+- [x] Add application icons for every size required by Tauri and Windows.
 - [ ] Build MSI/NSIS artifacts and install/uninstall them on a clean Windows test account.
-- [ ] Commit with `git commit -m "ci: build and verify Windows releases"`.
+- [x] Commit with `git commit -m "ci: build and verify Windows releases"`.
 
 ### Task E2: Final Acceptance
 
@@ -579,3 +579,11 @@ Use this prompt on the next device:
 - Verified: cloud tests 105/105, desktop tests 161/161, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, and two independent task-level reviews.
 - Blockers: live Coze smoke testing still requires a server-side PAT and published workflow ID. User-reported long-capture defects remain intentionally deferred until the primary feature and release pipeline are complete.
 - Next action: Task E1, add pull-request CI, Windows MSI/NSIS artifact builds, signing gates, and the release checklist.
+
+### 2026-07-23 15:05 — Windows release pipeline
+
+- Branch: `main`
+- HEAD: `fb84759 fix: harden Windows signing cleanup`
+- Verified: cloud tests 105/105, desktop tests 164/164, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, workflow YAML/PowerShell validation, unsigned NSIS generation, Authenticode `NotSigned`, and two E1 review passes.
+- Blockers: the local MSI build stops at WiX `light.exe` until the Windows VBSCRIPT optional feature is enabled; signed builds require the three repository secrets; clean-account installation and the E2 matrix remain unexecuted. Long-capture defects remain intentionally deferred.
+- Next action: enable VBSCRIPT and rebuild MSI/NSIS, then run the GitHub workflow and execute Task E2 from `docs/release-checklist.md`.
