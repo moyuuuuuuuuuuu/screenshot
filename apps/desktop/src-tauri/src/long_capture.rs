@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Condvar, Mutex,
@@ -8,11 +9,12 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
+use crate::long_capture_cycle::{CycleDecision, StableFrameGate};
 use crate::platform::{self, RawMonitorFrame};
 use crate::preview_windows::{
     deactivate_capture_mask_windows, open_capture_mask_windows, open_preview_window, ScreenRect,
 };
-use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
+use crate::region_observer::{RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::static_region_detector::detect_static_regions;
 use crate::stitcher::{
@@ -42,6 +44,8 @@ impl CaptureRegion {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LongCaptureProgress {
+    session_id: u64,
+    revision: u64,
     frame_count: u32,
     stitched_height: u32,
     state: &'static str,
@@ -50,6 +54,18 @@ pub struct LongCaptureProgress {
     accepted_bounds: Option<AcceptedBounds>,
     warning: bool,
     slow_scroll_warning: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+struct LongCaptureDiagnostic {
+    revision: u64,
+    state: &'static str,
+    observed_at_millis: u64,
+    change_ratio_micros: u32,
+    match_direction: &'static str,
+    overlap_rows: Option<u32>,
+    added_height: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -118,8 +134,6 @@ enum CaptureTermination {
     Partial,
     Completed,
 }
-
-const PREVIEW_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OverlayCleanup {
@@ -282,6 +296,7 @@ pub struct LongCaptureRuntime {
     stop_requested: AtomicBool,
     cancel_requested: AtomicBool,
     progress: Mutex<LongCaptureProgress>,
+    diagnostics: Mutex<VecDeque<LongCaptureDiagnostic>>,
     action: AtomicU8,
     session_transition: Mutex<()>,
     terminal_epoch: Mutex<u64>,
@@ -297,6 +312,7 @@ impl Default for LongCaptureRuntime {
             stop_requested: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
             progress: Mutex::new(LongCaptureProgress::default()),
+            diagnostics: Mutex::new(VecDeque::new()),
             action: AtomicU8::new(LongCaptureAction::None.code()),
             session_transition: Mutex::new(()),
             terminal_epoch: Mutex::new(0),
@@ -320,7 +336,7 @@ impl LongCaptureRuntime {
         self.cancel_requested.store(false, Ordering::Release);
         self.action
             .store(LongCaptureAction::None.code(), Ordering::Release);
-        self.update(0, 0, "preparing", Vec::new(), false, 0);
+        self.update(session_id, 0, 0, 0, "preparing", Vec::new(), false, 0);
         Ok(session_id)
     }
 
@@ -340,6 +356,8 @@ impl LongCaptureRuntime {
 
     fn update(
         &self,
+        session_id: u64,
+        revision: u64,
         frame_count: u32,
         stitched_height: u32,
         state: &'static str,
@@ -349,6 +367,8 @@ impl LongCaptureRuntime {
     ) {
         if let Ok(mut progress) = self.progress.lock() {
             *progress = LongCaptureProgress {
+                session_id,
+                revision,
                 frame_count,
                 stitched_height,
                 state,
@@ -363,6 +383,15 @@ impl LongCaptureRuntime {
                 warning,
                 slow_scroll_warning: warning,
             };
+        }
+    }
+
+    fn record_diagnostic(&self, event: LongCaptureDiagnostic) {
+        if let Ok(mut events) = self.diagnostics.lock() {
+            if events.len() == 64 {
+                events.pop_front();
+            }
+            events.push_back(event);
         }
     }
 
@@ -534,6 +563,8 @@ fn session_state_name(state: LongCaptureState) -> &'static str {
 
 fn publish_progress(
     runtime: &LongCaptureRuntime,
+    session_id: u64,
+    revision: u64,
     session: &LongCaptureSession,
     preview: &[u8],
     width: u32,
@@ -543,6 +574,8 @@ fn publish_progress(
         LongCaptureState::PausedReverse | LongCaptureState::Warning
     );
     runtime.update(
+        session_id,
+        revision,
         session.frame_count(),
         session.stitched_height(),
         session_state_name(session.state()),
@@ -558,6 +591,9 @@ fn append_matched_candidate(
     candidate: RgbaFrame,
     overlap_rows: u32,
 ) -> Result<u32, String> {
+    if accepted_tail == &candidate {
+        return Ok(0);
+    }
     let previous_gray = downscale_grayscale(accepted_tail, 4)
         .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
     let next_gray = downscale_grayscale(&candidate, 4)
@@ -578,12 +614,20 @@ fn append_matched_candidate(
     Ok(stitcher.height().saturating_sub(before_height))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MatchMotionOutcome {
+    appended: bool,
+    direction: &'static str,
+    overlap_rows: Option<u32>,
+    added_height: Option<u32>,
+}
+
 fn match_motion_candidate(
     session: &mut LongCaptureSession,
     stitcher: &mut ChunkedStitcher,
     accepted_tail: &RgbaFrame,
     candidate: &RgbaFrame,
-) -> Result<bool, String> {
+) -> Result<MatchMotionOutcome, String> {
     if session.state() != LongCaptureState::Scrolling {
         session
             .motion_started()
@@ -602,44 +646,50 @@ fn match_motion_candidate(
                 candidate.clone(),
                 overlap_rows.min(candidate.height.saturating_sub(1)),
             )?;
+            if added_height == 0 {
+                session
+                    .unmatched()
+                    .map_err(|_| "invalid zero-shift transition")?;
+                return Ok(MatchMotionOutcome {
+                    appended: false,
+                    direction: "unchanged",
+                    overlap_rows: Some(overlap_rows),
+                    added_height: Some(0),
+                });
+            }
             session
                 .forward_matched(added_height)
                 .map_err(|_| "invalid forward-match transition")?;
-            Ok(true)
+            Ok(MatchMotionOutcome {
+                appended: true,
+                direction: "forward",
+                overlap_rows: Some(overlap_rows),
+                added_height: Some(added_height),
+            })
         }
         MatchDirection::Reverse => {
             session
                 .reverse_detected()
                 .map_err(|_| "invalid reverse-match transition")?;
-            Ok(false)
+            Ok(MatchMotionOutcome {
+                appended: false,
+                direction: "reverse",
+                overlap_rows: None,
+                added_height: None,
+            })
         }
         MatchDirection::Unmatched => {
             session
                 .unmatched()
                 .map_err(|_| "invalid unmatched transition")?;
-            Ok(false)
+            Ok(MatchMotionOutcome {
+                appended: false,
+                direction: "unmatched",
+                overlap_rows: None,
+                added_height: None,
+            })
         }
     }
-}
-
-fn observation_requires_match(
-    observation: Observation,
-    latest_motion_frame_was_appended: bool,
-) -> bool {
-    matches!(
-        observation,
-        Observation::MotionStarted | Observation::MotionFrame
-    ) || (observation == Observation::StableFrame && !latest_motion_frame_was_appended)
-}
-
-fn should_refresh_preview(
-    observation: Observation,
-    preview_dirty: bool,
-    since_last_refresh: Duration,
-) -> bool {
-    preview_dirty
-        && (observation == Observation::StableFrame
-            || since_last_refresh >= PREVIEW_UPDATE_INTERVAL)
 }
 
 #[cfg(test)]
@@ -763,6 +813,7 @@ fn open_controls_window(
 
 fn run_capture(
     runtime: &LongCaptureRuntime,
+    session_id: u64,
     region: CaptureRegion,
 ) -> Result<LongCaptureResult, String> {
     let target_x = (region.x + region.width / 2.0).round() as i32;
@@ -789,10 +840,16 @@ fn run_capture(
         .map_err(|_| "failed to accept first long-capture frame")?;
     let mut accepted_tail = first;
     let mut preview_png = encode_png(&accepted_tail)?;
-    let mut latest_motion_frame_was_appended = false;
-    let mut preview_dirty = false;
-    let mut last_preview_refresh = Duration::ZERO;
-    publish_progress(runtime, &session, &preview_png, accepted_tail.width);
+    let mut gate = StableFrameGate::default();
+    let mut revision = 0_u64;
+    publish_progress(
+        runtime,
+        session_id,
+        revision,
+        &session,
+        &preview_png,
+        accepted_tail.width,
+    );
 
     loop {
         if runtime.cancel_requested.load(Ordering::Acquire) {
@@ -816,38 +873,49 @@ fn run_capture(
             .map_err(|error| format!("observation preparation failed: {error:?}"))?;
         let observed_at = started.elapsed();
         let observation = observer.observe(&candidate_gray.pixels, observed_at);
-        if observation == Observation::MotionStarted {
-            latest_motion_frame_was_appended = false;
-        }
-        if observation_requires_match(observation, latest_motion_frame_was_appended) {
-            latest_motion_frame_was_appended =
-                match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, &candidate)?;
-            if latest_motion_frame_was_appended {
-                accepted_tail = candidate;
-                observer.mark_appended(observed_at);
-                preview_dirty = true;
+        match gate.observe(observation) {
+            CycleDecision::MotionStarted => {
+                session
+                    .motion_started()
+                    .map_err(|_| "invalid motion transition")?;
             }
+            CycleDecision::StableCandidate => {
+                let settled = crop_region(platform::capture_monitors()?, region)?;
+                let outcome =
+                    match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, &settled)?;
+                if outcome.appended {
+                    accepted_tail = settled;
+                    observer.mark_appended(observed_at);
+                    preview_png = encode_png(
+                        &stitcher
+                            .preview()
+                            .map_err(|error| format!("preview failed: {error:?}"))?,
+                    )?;
+                    revision = revision.saturating_add(1);
+                }
+                runtime.record_diagnostic(LongCaptureDiagnostic {
+                    revision,
+                    state: session_state_name(session.state()),
+                    observed_at_millis: observed_at.as_millis() as u64,
+                    change_ratio_micros: (observer.last_difference() * 1_000_000.0) as u32,
+                    match_direction: outcome.direction,
+                    overlap_rows: outcome.overlap_rows,
+                    added_height: outcome.added_height,
+                });
+            }
+            CycleDecision::None => {}
         }
-        if should_refresh_preview(
-            observation,
-            preview_dirty,
-            observed_at.saturating_sub(last_preview_refresh),
-        ) {
-            preview_png = encode_png(
-                &stitcher
-                    .preview()
-                    .map_err(|error| format!("preview failed: {error:?}"))?,
-            )?;
-            preview_dirty = false;
-            // Start the cooldown after compression finishes so expensive previews do not
-            // immediately trigger another rebuild on the next sample.
-            last_preview_refresh = started.elapsed();
+        publish_progress(
+            runtime,
+            session_id,
+            revision,
+            &session,
+            &preview_png,
+            accepted_tail.width,
+        );
+        if runtime.wait_for_sample_or_terminal(SAMPLE_INTERVAL) {
+            continue;
         }
-        if observation == Observation::StableFrame {
-            latest_motion_frame_was_appended = false;
-        }
-        publish_progress(runtime, &session, &preview_png, accepted_tail.width);
-        let _ = runtime.wait_for_sample_or_terminal(SAMPLE_INTERVAL);
     }
 
     let outcome = termination(
@@ -1027,7 +1095,7 @@ pub async fn start_long_capture(
                 },
             )?;
             std::thread::sleep(Duration::from_millis(150));
-            let capture_result = run_capture(&runtime, region);
+            let capture_result = run_capture(&runtime, session_id, region);
             drop(capture_windows);
             capture_result
         })();
@@ -1088,13 +1156,12 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 mod tests {
     use super::{
         append_stable_candidate, cleanup_capture_windows, crop_region, finalize_capture_result,
-        match_motion_candidate, observation_requires_match, overlay_cleanup,
-        prepare_capture_windows, recover_from_cleanup_failure, resolve_capture_cleanup,
-        run_cleanup_callbacks, should_refresh_preview, termination, CaptureCleanup, CaptureRegion,
-        CaptureTermination, LongCaptureAction, OverlayCleanup,
+        match_motion_candidate, overlay_cleanup, prepare_capture_windows,
+        recover_from_cleanup_failure, resolve_capture_cleanup, run_cleanup_callbacks, termination,
+        CaptureCleanup, CaptureRegion, CaptureTermination, LongCaptureAction, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
-    use crate::region_observer::{Observation, RegionObserver};
+    use crate::region_observer::Observation;
     use crate::scroll_controller::LongCaptureSession;
     use crate::stitcher::{ChunkedStitcher, RgbaFrame};
     use std::{cell::Cell, cell::RefCell, rc::Rc};
@@ -1148,13 +1215,71 @@ mod tests {
     }
 
     #[test]
-    fn continuous_motion_frames_are_stitched_before_scrolling_stops() {
-        let first = document_frame(0, 700, 80);
-        let frames = [
-            document_frame(260, 700, 80),
-            document_frame(520, 700, 80),
-            document_frame(780, 700, 80),
+    fn only_a_stable_candidate_invokes_matching_once_per_cycle() {
+        use crate::long_capture_cycle::{CycleDecision, StableFrameGate};
+
+        let mut gate = StableFrameGate::default();
+        let observations = [
+            Observation::MotionStarted,
+            Observation::MotionFrame,
+            Observation::Stabilizing,
+            Observation::StableFrame,
+            Observation::StableFrame,
         ];
+        let decisions = observations.map(|value| gate.observe(value));
+        assert_eq!(
+            decisions,
+            [
+                CycleDecision::MotionStarted,
+                CycleDecision::None,
+                CycleDecision::None,
+                CycleDecision::StableCandidate,
+                CycleDecision::None,
+            ]
+        );
+    }
+
+    #[test]
+    fn progress_revision_changes_only_after_an_accepted_append() {
+        let runtime = super::LongCaptureRuntime::default();
+        let session_id = runtime.begin().unwrap();
+        runtime.update(session_id, 0, 1, 800, "observing", vec![1], false, 400);
+        let first = runtime.progress.lock().unwrap().clone();
+        runtime.update(session_id, 0, 1, 800, "scrolling", vec![1], false, 400);
+        let moving = runtime.progress.lock().unwrap().clone();
+        runtime.update(session_id, 1, 2, 1_200, "observing", vec![2], false, 400);
+        let appended = runtime.progress.lock().unwrap().clone();
+
+        assert_eq!(first.revision, moving.revision);
+        assert_eq!(appended.revision, first.revision + 1);
+        assert_eq!(appended.session_id, session_id);
+    }
+
+    #[test]
+    fn diagnostic_buffer_is_bounded_and_contains_no_pixel_payload() {
+        let runtime = super::LongCaptureRuntime::default();
+        for revision in 0..80 {
+            runtime.record_diagnostic(super::LongCaptureDiagnostic {
+                revision,
+                state: "observing",
+                observed_at_millis: revision,
+                change_ratio_micros: 0,
+                match_direction: "none",
+                overlap_rows: None,
+                added_height: None,
+            });
+        }
+        let diagnostics = runtime.diagnostics.lock().unwrap();
+        assert_eq!(diagnostics.len(), 64);
+        assert_eq!(diagnostics.front().unwrap().revision, 16);
+    }
+
+    #[test]
+    fn synthetic_frames_increase_height_only_after_stable_frame() {
+        use crate::long_capture_cycle::{CycleDecision, StableFrameGate};
+
+        let first = document_frame(0, 700, 80);
+        let candidate = document_frame(260, 700, 80);
         let mut session = LongCaptureSession::default();
         session.start().unwrap();
         session
@@ -1162,56 +1287,49 @@ mod tests {
             .unwrap();
         let mut stitcher = ChunkedStitcher::default();
         stitcher.append(first.clone(), 0).unwrap();
-        let mut observer = RegionObserver::new(0.01);
-        let first_gray = crate::stitcher::downscale_grayscale(&first, 8).unwrap();
-        observer.observe(&first_gray.pixels, std::time::Duration::ZERO);
-        let mut accepted_tail = first;
-        let mut latest_motion_frame_was_appended = false;
+        let mut gate = StableFrameGate::default();
 
-        for (index, candidate) in frames.into_iter().enumerate() {
-            let gray = crate::stitcher::downscale_grayscale(&candidate, 8).unwrap();
-            let observation = observer.observe(
-                &gray.pixels,
-                std::time::Duration::from_millis((index as u64 + 1) * 120),
-            );
-            assert!(observation_requires_match(
-                observation,
-                latest_motion_frame_was_appended
-            ));
-            latest_motion_frame_was_appended =
-                match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, &candidate)
-                    .unwrap();
-            assert!(latest_motion_frame_was_appended);
-            accepted_tail = candidate;
+        assert_eq!(
+            gate.observe(Observation::MotionStarted),
+            CycleDecision::MotionStarted
+        );
+        session.motion_started().unwrap();
+        for observation in [Observation::MotionFrame, Observation::Stabilizing] {
+            assert_eq!(gate.observe(observation), CycleDecision::None);
+            assert_eq!(session.frame_count(), 1);
+            assert_eq!(session.stitched_height(), 700);
         }
+        assert_eq!(
+            gate.observe(Observation::StableFrame),
+            CycleDecision::StableCandidate
+        );
+        let outcome =
+            match_motion_candidate(&mut session, &mut stitcher, &first, &candidate).unwrap();
 
-        assert_eq!(session.frame_count(), 4);
-        assert_eq!(session.stitched_height(), 1_480);
-        assert_eq!(stitcher.finish().unwrap().height, 1_480);
+        assert!(outcome.appended);
+        assert_eq!(session.frame_count(), 2);
+        assert_eq!(session.stitched_height(), 960);
+        assert_eq!(stitcher.finish().unwrap().height, 960);
     }
 
     #[test]
-    fn preview_refresh_is_throttled_during_motion_but_forced_when_stable() {
-        assert!(!should_refresh_preview(
-            Observation::MotionFrame,
-            true,
-            std::time::Duration::from_millis(120),
-        ));
-        assert!(should_refresh_preview(
-            Observation::MotionFrame,
-            true,
-            std::time::Duration::from_millis(500),
-        ));
-        assert!(should_refresh_preview(
-            Observation::StableFrame,
-            true,
-            std::time::Duration::from_millis(120),
-        ));
-        assert!(!should_refresh_preview(
-            Observation::StableFrame,
-            false,
-            std::time::Duration::from_secs(1),
-        ));
+    fn duplicate_stable_frame_is_unchanged_without_progress() {
+        let frame = document_frame(0, 700, 80);
+        let mut session = LongCaptureSession::default();
+        session.start().unwrap();
+        session
+            .accept_first_frame(frame.height, std::time::Duration::ZERO)
+            .unwrap();
+        session.motion_started().unwrap();
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(frame.clone(), 0).unwrap();
+
+        let outcome = match_motion_candidate(&mut session, &mut stitcher, &frame, &frame).unwrap();
+
+        assert!(!outcome.appended);
+        assert_eq!(outcome.direction, "unchanged");
+        assert_eq!(session.frame_count(), 1);
+        assert_eq!(session.stitched_height(), 700);
     }
 
     #[test]

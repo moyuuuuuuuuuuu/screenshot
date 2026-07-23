@@ -18,6 +18,7 @@ pub struct RegionObserver {
     change_threshold: f64,
     previous: Option<Vec<u8>>,
     motion_active: bool,
+    last_difference: f64,
     last_change: Duration,
     last_activity: Duration,
     last_append: Option<Duration>,
@@ -29,6 +30,7 @@ impl RegionObserver {
             change_threshold,
             previous: None,
             motion_active: false,
+            last_difference: 0.0,
             last_change: Duration::ZERO,
             last_activity: Duration::ZERO,
             last_append: None,
@@ -36,10 +38,12 @@ impl RegionObserver {
     }
 
     pub fn observe(&mut self, pixels: &[u8], now: Duration) -> Observation {
-        let changed = self
+        let difference = self
             .previous
             .as_deref()
-            .is_some_and(|previous| sample_difference(previous, pixels) > self.change_threshold);
+            .map_or(0.0, |previous| sample_difference(previous, pixels));
+        self.last_difference = difference;
+        let changed = difference > self.change_threshold;
         self.previous = Some(pixels.to_vec());
 
         if changed {
@@ -73,6 +77,10 @@ impl RegionObserver {
     pub fn mark_appended(&mut self, now: Duration) {
         self.last_append = Some(now);
         self.last_activity = now;
+    }
+
+    pub fn last_difference(&self) -> f64 {
+        self.last_difference
     }
 }
 
@@ -154,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn continuous_motion_exposes_intermediate_frames_for_stitching() {
+    fn continuous_motion_reports_motion_without_claiming_stability() {
         let mut observer = RegionObserver::new(0.25);
         observer.observe(&[0; 16], Duration::ZERO);
         assert_eq!(
@@ -169,6 +177,15 @@ mod tests {
             observer.observe(&[96; 16], Duration::from_millis(360)),
             Observation::MotionFrame
         );
+    }
+
+    #[test]
+    fn exposes_the_latest_numeric_change_ratio() {
+        let mut observer = RegionObserver::new(0.25);
+        observer.observe(&[0; 16], Duration::ZERO);
+        observer.observe(&[255; 16], Duration::from_millis(10));
+
+        assert_eq!(observer.last_difference(), 1.0);
     }
 
     #[test]
