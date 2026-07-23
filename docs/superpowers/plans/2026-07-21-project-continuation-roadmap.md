@@ -580,10 +580,10 @@ Use this prompt on the next device:
 - Blockers: live Coze smoke testing still requires a server-side PAT and published workflow ID. User-reported long-capture defects remain intentionally deferred until the primary feature and release pipeline are complete.
 - Next action: Task E1, add pull-request CI, Windows MSI/NSIS artifact builds, signing gates, and the release checklist.
 
-### 2026-07-23 15:05 — Windows release pipeline
+### 2026-07-23 15:47 — Windows release and startup verification
 
 - Branch: `main`
-- HEAD: `fb84759 fix: harden Windows signing cleanup`
-- Verified: cloud tests 105/105, desktop tests 164/164, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, workflow YAML/PowerShell validation, unsigned zh-CN MSI and NSIS generation, Authenticode `NotSigned`, MSI metadata inspection, and E1 review passes.
+- HEAD: `b6e401d test: verify hidden Windows startup`
+- Verified: cloud tests 105/105, desktop tests 164/164, Rust tests 100/100, root typecheck, cloud/desktop production builds, Rust format, Clippy with warnings denied, workflow YAML/PowerShell validation, unsigned zh-CN MSI and NSIS generation, Authenticode `NotSigned`, MSI metadata inspection, tray-only direct-executable startup with zero visible Tauri windows, and E1 review passes.
 - Blockers: signed builds require the three repository secrets; a clean Windows test account or sandbox is not available on this device, so installation and the E2 matrix remain unexecuted. Long-capture defects remain intentionally deferred.
 - Next action: run the GitHub workflow, then execute clean-account MSI/NSIS installation and Task E2 from `docs/release-checklist.md`.
