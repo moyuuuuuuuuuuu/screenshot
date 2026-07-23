@@ -14,7 +14,7 @@ use crate::platform::{self, RawMonitorFrame};
 use crate::preview_windows::{
     deactivate_capture_mask_windows, open_capture_mask_windows, open_preview_window, ScreenRect,
 };
-use crate::region_observer::{RegionObserver, SAMPLE_INTERVAL};
+use crate::region_observer::{Observation, RegionObserver, SAMPLE_INTERVAL};
 use crate::scroll_controller::{LongCaptureSession, LongCaptureState, SessionError};
 use crate::static_region_detector::detect_static_regions;
 use crate::stitcher::{
@@ -591,27 +591,58 @@ fn append_matched_candidate(
     candidate: RgbaFrame,
     overlap_rows: u32,
 ) -> Result<u32, String> {
-    if accepted_tail == &candidate {
-        return Ok(0);
-    }
     let previous_gray = downscale_grayscale(accepted_tail, 4)
         .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
     let next_gray = downscale_grayscale(&candidate, 4)
         .map_err(|error| format!("overlap preparation failed: {error:?}"))?;
     let static_regions =
         detect_static_regions(&[previous_gray, next_gray], 2, 0.9, 2).unwrap_or_default();
-    let before_height = stitcher.height();
+    let top_static_rows = static_regions.top_rows.saturating_mul(4);
+    let bottom_static_rows = static_regions.bottom_rows.saturating_mul(4);
+    let before_preview_height = stitcher
+        .preview()
+        .map_err(|error| format!("preview preparation failed: {error:?}"))?
+        .height;
+    let uses_static_regions = static_regions.confidence >= 0.9
+        && top_static_rows.saturating_add(bottom_static_rows) < candidate.height;
+    let projected_preview_height = if uses_static_regions {
+        let content_start = overlap_rows.max(top_static_rows);
+        let content_end = candidate.height - bottom_static_rows;
+        let content_rows = content_end.saturating_sub(content_start);
+        if content_rows == 0 {
+            return Ok(0);
+        }
+        let existing_footer_rows = before_preview_height.saturating_sub(stitcher.height());
+        let next_footer_rows = if bottom_static_rows > 0 {
+            bottom_static_rows
+        } else {
+            existing_footer_rows
+        };
+        stitcher
+            .height()
+            .saturating_add(content_rows)
+            .saturating_add(next_footer_rows)
+    } else {
+        before_preview_height.saturating_add(candidate.height.saturating_sub(overlap_rows))
+    };
+    if projected_preview_height <= before_preview_height {
+        return Ok(0);
+    }
     stitcher
         .append_with_static_regions(
             candidate,
             overlap_rows,
-            static_regions.top_rows * 4,
-            static_regions.bottom_rows * 4,
+            top_static_rows,
+            bottom_static_rows,
             static_regions.confidence,
             false,
         )
         .map_err(|error| format!("stitch failed: {error:?}"))?;
-    Ok(stitcher.height().saturating_sub(before_height))
+    let after_preview_height = stitcher
+        .preview()
+        .map_err(|error| format!("preview failed: {error:?}"))?
+        .height;
+    Ok(after_preview_height.saturating_sub(before_preview_height))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -636,6 +667,20 @@ fn match_motion_candidate(
     session
         .stable_frame_ready()
         .map_err(|_| "invalid candidate-frame transition")?;
+    if accepted_tail.width == candidate.width
+        && accepted_tail.height == candidate.height
+        && accepted_tail.pixels == candidate.pixels
+    {
+        session
+            .unchanged()
+            .map_err(|_| "invalid unchanged transition")?;
+        return Ok(MatchMotionOutcome {
+            appended: false,
+            direction: "unchanged",
+            overlap_rows: None,
+            added_height: Some(0),
+        });
+    }
     match match_vertical_scroll(accepted_tail, candidate)
         .map_err(|error| format!("candidate-frame match failed: {error:?}"))?
     {
@@ -811,6 +856,24 @@ fn open_controls_window(
     )
 }
 
+enum ObservedCycleDecision<'a> {
+    None,
+    MotionStarted,
+    StableCandidate(&'a RgbaFrame),
+}
+
+fn observe_capture_cycle<'a>(
+    gate: &mut StableFrameGate,
+    observation: Observation,
+    observed_frame: &'a RgbaFrame,
+) -> ObservedCycleDecision<'a> {
+    match gate.observe(observation) {
+        CycleDecision::None => ObservedCycleDecision::None,
+        CycleDecision::MotionStarted => ObservedCycleDecision::MotionStarted,
+        CycleDecision::StableCandidate => ObservedCycleDecision::StableCandidate(observed_frame),
+    }
+}
+
 fn run_capture(
     runtime: &LongCaptureRuntime,
     session_id: u64,
@@ -873,18 +936,17 @@ fn run_capture(
             .map_err(|error| format!("observation preparation failed: {error:?}"))?;
         let observed_at = started.elapsed();
         let observation = observer.observe(&candidate_gray.pixels, observed_at);
-        match gate.observe(observation) {
-            CycleDecision::MotionStarted => {
+        match observe_capture_cycle(&mut gate, observation, &candidate) {
+            ObservedCycleDecision::MotionStarted => {
                 session
                     .motion_started()
                     .map_err(|_| "invalid motion transition")?;
             }
-            CycleDecision::StableCandidate => {
-                let settled = crop_region(platform::capture_monitors()?, region)?;
+            ObservedCycleDecision::StableCandidate(settled) => {
                 let outcome =
-                    match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, &settled)?;
+                    match_motion_candidate(&mut session, &mut stitcher, &accepted_tail, settled)?;
                 if outcome.appended {
-                    accepted_tail = settled;
+                    accepted_tail = candidate;
                     observer.mark_appended(observed_at);
                     preview_png = encode_png(
                         &stitcher
@@ -903,7 +965,7 @@ fn run_capture(
                     added_height: outcome.added_height,
                 });
             }
-            CycleDecision::None => {}
+            ObservedCycleDecision::None => {}
         }
         publish_progress(
             runtime,
@@ -1155,14 +1217,14 @@ pub fn long_capture_progress(runtime: tauri::State<'_, LongCaptureRuntime>) -> L
 #[cfg(test)]
 mod tests {
     use super::{
-        append_stable_candidate, cleanup_capture_windows, crop_region, finalize_capture_result,
-        match_motion_candidate, overlay_cleanup, prepare_capture_windows,
+        append_matched_candidate, append_stable_candidate, cleanup_capture_windows, crop_region,
+        finalize_capture_result, match_motion_candidate, overlay_cleanup, prepare_capture_windows,
         recover_from_cleanup_failure, resolve_capture_cleanup, run_cleanup_callbacks, termination,
         CaptureCleanup, CaptureRegion, CaptureTermination, LongCaptureAction, OverlayCleanup,
     };
     use crate::platform::RawMonitorFrame;
     use crate::region_observer::Observation;
-    use crate::scroll_controller::LongCaptureSession;
+    use crate::scroll_controller::{LongCaptureSession, LongCaptureState};
     use crate::stitcher::{ChunkedStitcher, RgbaFrame};
     use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -1198,6 +1260,28 @@ mod tests {
             height,
             pixels,
         }
+    }
+
+    fn document_frame_with_static_footer(
+        start_row: u32,
+        height: u32,
+        width: u32,
+        footer_rows: u32,
+    ) -> RgbaFrame {
+        let mut frame = document_frame(start_row, height, width);
+        for y in height - footer_rows..height {
+            for x in 0..width {
+                let offset = ((y * width + x) * 4) as usize;
+                let value = (x as u8).wrapping_mul(37).wrapping_add(19);
+                frame.pixels[offset..offset + 4].copy_from_slice(&[
+                    value,
+                    value.wrapping_add(41),
+                    value.wrapping_add(83),
+                    255,
+                ]);
+            }
+        }
+        frame
     }
 
     #[test]
@@ -1237,6 +1321,27 @@ mod tests {
                 CycleDecision::None,
             ]
         );
+    }
+
+    #[test]
+    fn stable_candidate_keeps_the_observed_frame_identity() {
+        use crate::long_capture_cycle::StableFrameGate;
+
+        let moving = document_frame(100, 700, 80);
+        let observed_stable = document_frame(260, 700, 80);
+        let mut gate = StableFrameGate::default();
+        assert!(matches!(
+            super::observe_capture_cycle(&mut gate, Observation::MotionStarted, &moving),
+            super::ObservedCycleDecision::MotionStarted
+        ));
+
+        let decision =
+            super::observe_capture_cycle(&mut gate, Observation::StableFrame, &observed_stable);
+        let super::ObservedCycleDecision::StableCandidate(candidate) = decision else {
+            panic!("expected the observed stable frame");
+        };
+
+        assert!(std::ptr::eq(candidate, &observed_stable));
     }
 
     #[test]
@@ -1330,6 +1435,71 @@ mod tests {
         assert_eq!(outcome.direction, "unchanged");
         assert_eq!(session.frame_count(), 1);
         assert_eq!(session.stitched_height(), 700);
+    }
+
+    #[test]
+    fn low_texture_duplicate_is_unchanged_without_warning() {
+        let frame = RgbaFrame {
+            width: 80,
+            height: 700,
+            pixels: [64, 64, 64, 255].repeat(80 * 700),
+        };
+        let mut session = LongCaptureSession::default();
+        session.start().unwrap();
+        session
+            .accept_first_frame(frame.height, std::time::Duration::ZERO)
+            .unwrap();
+        session.motion_started().unwrap();
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(frame.clone(), 0).unwrap();
+
+        let outcome = match_motion_candidate(&mut session, &mut stitcher, &frame, &frame).unwrap();
+
+        assert!(!outcome.appended);
+        assert_eq!(outcome.direction, "unchanged");
+        assert_eq!(session.state(), LongCaptureState::Observing);
+        assert_eq!(session.frame_count(), 1);
+        assert_eq!(session.stitched_height(), 700);
+    }
+
+    #[test]
+    fn zero_content_candidate_with_static_footer_does_not_mutate_stitcher() {
+        let first = document_frame_with_static_footer(0, 700, 80, 40);
+        let candidate = document_frame_with_static_footer(260, 700, 80, 40);
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(first.clone(), 0).unwrap();
+        let before = stitcher.preview().unwrap();
+
+        let added = append_matched_candidate(&mut stitcher, &first, candidate, 660).unwrap();
+
+        assert_eq!(added, 0);
+        assert_eq!(stitcher.preview().unwrap(), before);
+        assert_eq!(stitcher.finish().unwrap(), before);
+    }
+
+    #[test]
+    fn static_footer_append_keeps_session_preview_and_final_heights_equal() {
+        let first = document_frame_with_static_footer(0, 700, 80, 40);
+        let candidate = document_frame_with_static_footer(260, 700, 80, 40);
+        let mut session = LongCaptureSession::default();
+        session.start().unwrap();
+        session
+            .accept_first_frame(first.height, std::time::Duration::ZERO)
+            .unwrap();
+        session.motion_started().unwrap();
+        let mut stitcher = ChunkedStitcher::default();
+        stitcher.append(first.clone(), 0).unwrap();
+
+        let outcome =
+            match_motion_candidate(&mut session, &mut stitcher, &first, &candidate).unwrap();
+        let preview = stitcher.preview().unwrap();
+        let session_height = session.stitched_height();
+        let final_frame = stitcher.finish().unwrap();
+
+        assert!(outcome.appended);
+        assert_eq!(session_height, preview.height);
+        assert_eq!(session_height, final_frame.height);
+        assert_eq!(preview, final_frame);
     }
 
     #[test]

@@ -105,6 +105,14 @@ impl LongCaptureSession {
         Ok(())
     }
 
+    pub fn unchanged(&mut self) -> Result<(), SessionError> {
+        if self.state != LongCaptureState::Matching {
+            return Err(SessionError::InvalidTransition);
+        }
+        self.state = LongCaptureState::Observing;
+        Ok(())
+    }
+
     pub fn reverse_detected(&mut self) -> Result<(), SessionError> {
         if self.state != LongCaptureState::Matching {
             return Err(SessionError::InvalidTransition);
@@ -244,6 +252,30 @@ mod tests {
         assert_eq!(session.frame_count(), 1);
         session.motion_started().unwrap();
         assert_eq!(session.state(), LongCaptureState::Scrolling);
+    }
+
+    #[test]
+    fn unchanged_candidate_returns_to_observing_without_progress() {
+        let mut session = session_with_first_frame(800);
+        session.motion_started().unwrap();
+        session.stable_frame_ready().unwrap();
+
+        session.unchanged().unwrap();
+
+        assert_eq!(session.state(), LongCaptureState::Observing);
+        assert_eq!(session.frame_count(), 1);
+        assert_eq!(session.stitched_height(), 800);
+    }
+
+    #[test]
+    fn unchanged_candidate_rejects_a_non_matching_state() {
+        let mut session = session_with_first_frame(800);
+        session.motion_started().unwrap();
+
+        assert_eq!(session.unchanged(), Err(SessionError::InvalidTransition));
+        assert_eq!(session.state(), LongCaptureState::Scrolling);
+        assert_eq!(session.frame_count(), 1);
+        assert_eq!(session.stitched_height(), 800);
     }
 
     #[test]
