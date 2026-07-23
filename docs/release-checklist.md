@@ -180,6 +180,30 @@ apps/desktop/src-tauri/target/debug/bundle/nsis/截图工具_0.1.0_x64-setup.exe
 `ProductVersion=0.1.0`。这些结果只证明两个未签名内部测试包可以生成
 且 MSI 元数据可读，不代表已经完成安装、升级、卸载或干净账户验收。
 
+### E2 直接启动烟测
+
+构建 Windows debug 可执行文件后运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/verify-windows-startup.ps1
+```
+
+探针等待三秒后确认进程仍存活、进程拥有的可见 `Tauri Window` 数量为
+`0`，并输出空闲工作集大小后关闭自己启动的进程。本次工作集为
+32,686,080 bytes。
+
+探针按进程 ID 和窗口类名枚举窗口，不使用
+`Process.MainWindowHandle`；后者会错误选中 16×16 的
+`Tao Thread Event Target` 内部事件窗口。此结果证明直接构建的 debug
+程序启动后没有可见 Tauri UI；它没有验证托盘图标、前台焦点或任务栏
+按钮，也不代表已完成干净账户 MSI/NSIS 安装、升级、降级、快捷键、
+托盘菜单或卸载验收。
+
+另用默认 `Alt+Shift+A` 和 `Esc` 验证同一枚举器：可见 Tauri 窗口数
+从启动后的 `0` 变为截图时的 `1`，取消后恢复为 `0`。这证明探针既
+不会把 Tao 辅助窗口误报为截图界面，也能识别真实蒙层。
+
 ## 7. 干净账户安装验收
 
 以下步骤必须在未安装过本工具的 Windows 测试账户中分别对 MSI 和
