@@ -91,6 +91,30 @@ describe('cloud OCR and translation API', () => {
     await app.close();
   });
 
+  it('returns a stable error envelope for malformed JSON uploads', async () => {
+    const app = buildServer();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ocr',
+      headers: {
+        'content-type': 'application/json',
+        'x-request-id': 'malformed-json-request',
+      },
+      payload: '{',
+    });
+
+    expect(response.statusCode).toBe(415);
+    expect(response.json()).toEqual({
+      error: {
+        code: 'UNSUPPORTED_MEDIA_TYPE',
+        message: 'Only image uploads are supported.',
+        requestId: 'malformed-json-request',
+      },
+    });
+
+    await app.close();
+  });
+
   it('returns a stable error envelope for images over 8 MB', async () => {
     const app = buildServer();
     const response = await app.inject({

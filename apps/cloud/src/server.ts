@@ -24,6 +24,10 @@ export function buildServer(
 ): FastifyInstance {
   const app = Fastify({ bodyLimit: parserBodyLimit });
 
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body, done) => {
+    done(null, body);
+  });
   app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
     done(null, body);
   });
